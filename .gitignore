@@ -1,0 +1,21 @@
+# 临时/中间产物
+.fix/
+.sync/
+*.tmp
+*.log
+
+# WorkBuddy 本地记忆（不上传）
+.workbuddy/
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+
+# 依赖（本项目为单文件离线页，正常不会有，保险起见）
+node_modules/
+__pycache__/
