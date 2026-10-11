@@ -1531,11 +1531,16 @@ function ringPathCircle(size){
   return pts;
 }
 
-/* 回形针：由外向内螺旋。外圈起始，每圈向内缩 1 格。 */
+/* 回形针：由外向内螺旋。外圈起始，每圈向内缩 1 格。
+   网格边长 n 取「满足 n² ≥ size 的最小奇数」（下限 5），
+   这样螺旋点数只比 size 略多，抽稀后格子近乎铺满、螺旋清晰可读；
+   旧公式 n 偏大（40 格会取 13×13=169 点抽 40），格子稀疏散落、连线乱穿。 */
 function ringPathPaperclip(size, W){
   /* 用网格逐圈生成螺旋点，再线性抽稀/补齐到 size */
   const pts = [];
-  let n = Math.max(5, Math.ceil((Math.ceil((size + 4) / 4)) / 2) * 2 + 1);
+  let r = Math.ceil(Math.sqrt(size));
+  if (r % 2 === 0) r++;
+  const n = Math.max(5, r);
   /* 生成完整螺旋：外圈 → 内圈 */
   const seen = new Set();
   let top = 0, left = 0, bottom = n - 1, right = n - 1;
@@ -1605,25 +1610,21 @@ function layoutBoard(size, shape, W, pad){
 
   /* 自由点位型（circle / diamond）：形状函数给的是单位轮廓（外接半径 1），
      这里反解像素半径 R，使「格子不越界」与「相邻格不重叠」同时成立。
-     约束一：整圈外接 R + 半个格子 ≤ 可用区半径 → R ≤ IW/2 - s/2
-     约束二：相邻格弦长 ≥ 格子边长 → R ≥ s / (2·sin(π/n))
-     取最大的 s 使其可行：s = IW / (1 + 1/sin(π/n))（近似椭圆用单元弦长）
-     再乘 0.98 留一点余量。 */
-  const n = Math.max(3, pts.length);
-  const halfAng = Math.PI / n;
-  /* 相邻格弦长 = 2R·sin(halfAng)；要求 ≥ s（不重叠）
+     相邻格间距 = 周长/n·R，要求 ≥ s（不重叠）→ R ≥ s·n/perim
      外接约束：R + s/2 ≤ IW/2
-     联立消 R：s ≤ IW·sin(halfAng) / (sin(halfAng) + 1) */
-  const sinH = Math.sin(halfAng);
+     联立消 R：s ≤ IW·perim / (2n + perim)
+     菱形周长 4√2 短于圆周 2π——旧公式统一用圆弦长，菱形格子会互相重叠约 10%。 */
+  const n = Math.max(3, pts.length);
+  const perim = shape === 'diamond' ? 4 * Math.SQRT2 : 2 * Math.PI;
   /* 基准尺寸：按分辨率换算的上下限 */
   const sMin = 22 * (W / 1100);
   const sMax = 130 * (W / 1100);
-  let s = (IW * sinH) / (sinH + 1) * 0.98;
+  let s = (IW * perim) / (2 * n + perim) * 0.98;
   s = clamp(s, sMin, sMax);
 
   /* 反解半径：既要放得下整圈（含半格），又要让相邻格刚好不挤 */
   const Rfit  = IW/2 - s/2;                 // 外接约束
-  const Rsafe = s / (2 * sinH);             // 不重叠约束需要的半径
+  const Rsafe = s * n / perim;              // 不重叠约束需要的半径
   const R = Math.min(Rfit, Math.max(Rsafe, Rfit * 0.82));
 
   const cx = W/2, cy = W/2;
