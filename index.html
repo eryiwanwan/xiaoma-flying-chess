@@ -4769,6 +4769,13 @@ const Cover = {
   },
   /* 进入游戏主流程（无存档 → 开局弹窗；有存档 → 恢复） */
   enter(){
+    /* 深链参与者：跳过开局设置，直接进对局等房主同步
+       —— 若走「开始游戏」会本地重开一局（进度归零），要等房主下次行动才被拉回同步 */
+    if(State.room && !isHost()){
+      if(Store.load()) UI.resume();
+      Toast.push(`已加入房间 ${State.room}，正在等待房主同步…`,'gold');
+      return;
+    }
     const save = Store.load();
     if(save){
       UI.resume();
@@ -4879,6 +4886,7 @@ const Remote = {
       v: 1,
       room: State.room,
       hostKey: State.hostKey,
+      relay: Relay.url || State.relayUrl || '',   /* 邀请码自带中继地址，对方不必手动配置 */
       boardSpec: spec,
       board: State.customBoard || null,
       settings: {
@@ -5069,6 +5077,7 @@ const Remote = {
    ========================================================= */
 const RELAY_LS = 'mjq_relay_v1';                 // 中继地址的本地记忆
 const RELAY_PROTO = 'mjq-relay-v1';              // 应用层协议标识（中继可据此路由）
+const RELAY_DEFAULT = 'wss://xiaoma-flying-chess-production-d45e.up.railway.app'; // 默认中继地址（Railway 自建）
 
 /* 极简中继协议（任意后端 20 行即可实现，见面板内说明）：
      客户端 → 中继：{"p":"join","room":R,"name":N}
@@ -5092,7 +5101,7 @@ const Relay = {
   _manualClose: false,
 
   loadUrl(){
-    try{ return localStorage.getItem(RELAY_LS) || ''; }catch(e){ return ''; }
+    try{ return localStorage.getItem(RELAY_LS) || RELAY_DEFAULT; }catch(e){ return RELAY_DEFAULT; }
   },
   saveUrl(u){
     this.url = String(u||'').trim();
@@ -5557,6 +5566,13 @@ const Room = {
       if(d.t === 'state'){ Toast.push('这是一份对局快照，不是邀请码','pink'); return; }
       if(d.t !== 'room'){ Toast.push('无法识别的邀请码类型','pink'); return; }
       if(!Remote.applyRoom(d, false)){ Toast.push('邀请码解析失败','pink'); return; }
+      /* 邀请码自带中继地址：优先于本机旧记忆，避免连到失效地址 */
+      if(d.relay && /^wss?:\/\//i.test(String(d.relay))){
+        Relay.saveUrl(d.relay);
+        State.relayUrl = d.relay;
+        State.settings = Object.assign({}, State.settings || {}, {relayUrl: d.relay});
+        Store.saveSettings(State.settings);
+      }
       UI.closeModal(); Room.open();
       Toast.push(`已进入房间 ${State.room}（参与者）`,'gold');
       log(`🚪 已加入房间 <b>${State.room}</b>，棋盘与规则由房主设定。`, 'good');
@@ -5777,7 +5793,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
     Store.save();
     Toast.push(`正在进入房间 ${dlRoom}…`,'gold');
   }
-  if(dlRelay){ Relay.saveUrl(dlRelay); State.relayUrl = dlRelay; }
+  if(dlRelay){
+    Relay.saveUrl(dlRelay);
+    State.relayUrl = dlRelay;
+    /* 同步写回设置：否则下次无链启动会退回 settings 里残留的旧地址 */
+    State.settings = Object.assign({}, State.settings || {}, {relayUrl: dlRelay});
+    Store.saveSettings(State.settings);
+  }
   /* 有待连接的中继 + 房间 → 连线（封面关掉后再连，避免抢音频） */
   const pendingRelay = (dlRoom || State.room) && Relay.url;
 
