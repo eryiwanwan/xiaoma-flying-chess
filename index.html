@@ -134,11 +134,23 @@ body::before{
 /* ============ 主体 ============ */
 #main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:start}
 #boardWrap{padding:10px;position:relative}
-/* 棋盘整体突出：让 SVG 的投影延伸到容器外，视觉上浮起来 */
+/* 棋盘整体突出：让 SVG 的投影延伸到容器外，视觉上浮起来。
+   关键：棋盘是正方形，边长必须同时受「宽度」和「可用高度」约束。
+   只用宽度定正方形时，横屏 iPad（1194×834）会把棋盘撑到 818px 高，
+   整块溢出屏幕、右侧与底部格子被裁掉。
+   这里用 CSS min() 直接算：
+     · 宽度上限 = 容器宽度
+     · 高度上限 = 视口高度扣掉顶栏 / 玩家面板 / 吸底骰子条（--chrome-h，由 JS 提供）
+   取两者较小值，天然等比、且不依赖 JS 时序（resize 时浏览器自己重算）。 */
 #boardHost{
-  width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
-  filter:drop-shadow(0 8px 26px rgba(0,0,0,.5))
+  width:100%;aspect-ratio:1;
+  /* --board-chrome 由 sizeBoard() 实测写入；首屏 JS 还没跑时用保守默认值，
+     避免棋盘先撑大再回缩造成闪动。 */
+  max-width:min(100%, calc(var(--board-avail-h, 100vh) - var(--board-chrome, 300px)));
+  margin:0 auto;display:flex;align-items:center;justify-content:center;
+  min-height:0;filter:drop-shadow(0 8px 26px rgba(0,0,0,.5))
 }
+#boardHost > svg{width:100%;height:100%;max-width:100%;max-height:100%}
 
 /* ============ 侧栏 ============ */
 #side{display:flex;flex-direction:column;gap:12px}
@@ -540,6 +552,17 @@ select option{background:#241432;color:var(--txt)}
 /* ============ 移动端 / 响应式 ============ */
 
 /* --- 平板 / 小笔记本：主体改单列 --- */
+@media(max-width:1024px){
+  /* 顶栏按钮条：平板宽度也放不下 6 个按钮，
+     改为可横向滑动，避免换行/文字被截断 */
+  #topbar .tb-scroll{
+    display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;
+    padding-bottom:2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+  }
+  #topbar .tb-scroll::-webkit-scrollbar{display:none}
+  #topbar .btn-sm{flex:0 0 auto;white-space:nowrap}
+}
+
 @media(max-width:860px){
   #main{grid-template-columns:1fr}
   #side{order:2}
@@ -554,6 +577,27 @@ select option{background:#241432;color:var(--txt)}
   #logo{font-size:15.5px}
   #dice{width:76px;height:76px;padding:10px}
   .pip{width:13px;height:13px}
+}
+
+/* --- 平板横屏 / 矮屏（触屏）：主体双列但骰子吸底，棋盘按高度收 ---
+   用 pointer:coarse 限定触屏，避免命中 1366×768 这类矮屏笔记本：
+   笔记本更适合让棋盘自然排布，而不是把骰子条吸到底部盖住棋盘。
+   高度阈值放到 900px，覆盖 iPad Pro 11/12.9 横屏（834/1024 宽 × 834/1024 高）。 */
+@media(min-width:861px) and (pointer:coarse) and (orientation:landscape){
+  #main{padding-bottom:96px}
+  #side{gap:9px}
+  #diceSect{
+    position:fixed;left:0;right:0;bottom:0;z-index:80;
+    border-radius:18px 18px 0 0;border-bottom:none;
+    padding:8px 16px calc(8px + env(safe-area-inset-bottom,0px));
+    background:rgba(30,15,45,.96);backdrop-filter:blur(18px);
+    box-shadow:0 -8px 30px rgba(0,0,0,.55);
+  }
+  #diceSect h3{display:none}
+  #diceBox{flex-direction:row;gap:14px;padding:0;align-items:center}
+  #dice{width:54px;height:54px;padding:8px;border-radius:13px;flex:0 0 auto}
+  #rollBtn{flex:1 1 auto;min-width:0}
+  #turnHint{font-size:12px}
 }
 
 /* --- 手机：整体改为「骰子吸底 + 棋盘优先」布局 --- */
@@ -685,8 +729,8 @@ select option{background:#241432;color:var(--txt)}
   #main{padding-bottom:72px}
 }
 
-/* --- 横屏矮屏：避免吸底骰子条吃掉棋盘 --- */
-@media(max-width:900px) and (orientation:landscape) and (max-height:520px){
+/* --- 横屏手机：避免吸底骰子条吃掉棋盘，棋盘按高度收 --- */
+@media(max-width:860px) and (orientation:landscape) and (max-height:560px){
   #diceSect{
     position:static;border-radius:14px;border-bottom:1px solid var(--border);
     padding:8px 11px;box-shadow:none;background:var(--panel);
@@ -694,7 +738,7 @@ select option{background:#241432;color:var(--txt)}
   #diceSect h3{display:none}
   #diceBox{flex-direction:row;padding:0}
   #main{padding-bottom:0}
-  #boardWrap{max-width:min(56vh,520px);margin:0 auto}
+  #boardWrap{max-width:min(62vh,520px);margin:0 auto}
 }
 
 /* --- 封面在窄屏/手机上收紧 --- */
@@ -2002,6 +2046,12 @@ const Board = {
     host.appendChild(svg);
     this.svg = svg;
     this.drawPieces();
+    /* 重绘后同步一次棋盘可用高度（横竖屏切换 / 窗口变化都会走这里）。
+       放 rAF 里等布局稳定后再测，避免读到中间态。 */
+    if(typeof sizeBoard === 'function'){
+      sizeBoard();
+      if(typeof requestAnimationFrame === 'function') requestAnimationFrame(sizeBoard);
+    }
   },
 
   drawPieces(){
@@ -3087,14 +3137,28 @@ const Game = {
 const UI = {
   modalStack: [],
 
-  mount(html, cls){
+  /* mount(html, cls, opts)
+     opts.dismissible —— 点遮罩是否允许关闭。默认 false：
+       "误触框外就关窗"会让填到一半的开局设置/编辑器直接丢掉，
+       属于很容易踩的坑，所以默认锁住，只有明确需要的面板才开。
+     opts.lock —— 强制锁定（确认类弹窗内部使用）。 */
+  mount(html, cls, opts){
+    const o = opts || {};
     const host = $('#modalHost');
     const wrap = document.createElement('div');
     wrap.className = 'modal';
     wrap.innerHTML = `<div class="mbox ${cls||''}">${html}</div>`;
     host.appendChild(wrap);
     this.modalStack.push(wrap);
-    wrap.addEventListener('click', e=>{ if(e.target === wrap && wrap.dataset.lock !== '1') this.closeModal(); });
+    /* 只有显式声明 dismissible 且未被 lock 的面板，才允许点遮罩关闭 */
+    if(o.dismissible) wrap.dataset.dismissible = '1';
+    if(o.lock)        wrap.dataset.lock = '1';
+    wrap.addEventListener('click', e=>{
+      if(e.target !== wrap) return;                  // 只认"点在最外层遮罩上"
+      if(wrap.dataset.lock === '1') return;          // 强制锁定
+      if(wrap.dataset.dismissible !== '1') return;   // 默认不因误触关闭
+      this.closeModal();
+    });
     return wrap;
   },
   closeModal(){
@@ -3325,6 +3389,7 @@ const UI = {
       </div>
 
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap">
+        ${hasSave ? '<button class="btn" id="setupBack" style="margin-right:auto">← 返回</button>' : ''}
         <button class="btn" id="libBtn">📚 内容库</button>
         <button class="btn" id="codexBtn">📖 图鉴</button>
         <button class="btn" id="boardBtn">🎨 棋盘</button>
@@ -3332,6 +3397,13 @@ const UI = {
         <button class="btn btn-primary" id="startBtn">开始游戏 →</button>
       </div>
     `, 'wide');
+
+    /* 开局设置不再靠点遮罩关闭（防误触丢配置），
+       检测到存档时给一个明确的返回入口，回到封面主流程。 */
+    if(w.querySelector('#setupBack')) w.querySelector('#setupBack').onclick = ()=>{
+      this.closeModal();
+      if(hasSave) UI.resume();
+    };
 
     /* ---- 玩家名单渲染 ---- */
     const renderRoster = ()=>{
@@ -3825,7 +3897,7 @@ const UI = {
       <div id="cbody">${body()}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
         <button class="btn btn-primary" id="cclose">${onBack?'返回设置':'知道了'}</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     w.querySelectorAll('.codex-tab').forEach(t=>{
       t.onclick = ()=>{
@@ -3928,7 +4000,7 @@ const UI = {
       <div id="lGrid" style="max-height:46vh;overflow-y:auto;padding-right:6px">${grid()}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
         <button class="btn btn-primary" id="lClose">${onBack?'返回设置':'完成'}</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     /* ---- 绑定输入 ---- */
     const commit = ()=>{
@@ -4599,27 +4671,59 @@ const UI = {
       Toast.push('已随机生成数量配置','gold');
     };
 
-    /* 预设按格数等比缩放，这样换成 64 格也依然是"均衡"的 */
+    /* 预设按格数等比缩放。旧实现只让"最后一类"补齐，其余各类独立四舍五入，
+       当基数合计（刺激配置 = 40）本身不小于 38 时，取整后总和必然溢出，
+       最后一类被 Math.max(0,…) 压成 0，界面显示的合计就超过棋盘容量了
+       （表现：选刺激配置后数量超出 / 休憩格恒为 0）。
+       这里改成"归一化 + 最大余数法"分配：先按比例取整，再把差额按小数部分
+       从大到小逐一补/减，保证任意格数下都恰好铺满且各类占比不失真。 */
     const preset = (base40)=>{
-      const ratio = (eSize - 2) / 38;
+      const cap = Math.max(0, eSize - 2);                 // 可铺格数（去掉起点与终点）
+      const keys = COUNTABLE.slice();
+      const total = keys.reduce((s,k)=>s+Math.max(0, base40[k]||0), 0);
       const c = {};
-      let used = 0;
-      COUNTABLE.forEach((k,i,arr)=>{
-        c[k] = (i === arr.length - 1)
-          ? Math.max(0, eSize - 2 - used)          // 最后一类补齐，保证刚好铺满
-          : Math.max(0, Math.round((base40[k]||0) * ratio));
-        used += c[k];
+      if(cap <= 0 || total <= 0){ keys.forEach(k=>{ c[k]=0; }); return c; }
+
+      /* 1) 按占比算理想份额，取整数部分 */
+      const raw = {}, frac = {};
+      keys.forEach(k=>{
+        const exact = Math.max(0, base40[k]||0) / total * cap;
+        const fl = Math.floor(exact);
+        raw[k] = fl;
+        frac[k] = exact - fl;
       });
+      let used = keys.reduce((s,k)=>s+raw[k], 0);
+
+      /* 2) 差额用最大余数法补足（差额 > 0）或从余数最小者削减（差额 < 0） */
+      if(used < cap){
+        const order = keys.slice().sort((a,b)=>frac[b]-frac[a]);
+        let i = 0;
+        while(used < cap){ raw[order[i % order.length]]++; used++; i++; }
+      }else if(used > cap){
+        const order = keys.slice().sort((a,b)=>frac[a]-frac[b]);
+        let i = 0;
+        while(used > cap){
+          const k = order[i % order.length];
+          if(raw[k] > 0){ raw[k]--; used--; }
+          else if(order.every(x=>raw[x] <= 0)) break;     // 兜底防死循环
+          i++;
+        }
+      }
+
+      /* 3) 起点与终点各占 1 格，其余按分配结果 */
+      keys.forEach(k=>{ c[k] = Math.max(0, raw[k] || 0); });
       return c;
     };
 
+    /* 预设基数按「38 格可铺区」给出，天然铺满。
+       刺激配置让惩罚+陷阱占到约 2/3，同时保留少量休憩格作缓冲。 */
     w.querySelector('#eBalance').onclick = ()=>{
       applyPreset(preset({punish:9, event:6, gold:6, shop:4, forward:5, back:3, trap:3, safe:2}));
       Toast.push('已应用均衡配置','gold');
     };
 
     w.querySelector('#eHard').onclick = ()=>{
-      applyPreset(preset({punish:14, event:7, gold:4, shop:4, forward:2, back:4, trap:5, safe:2}));
+      applyPreset(preset({punish:16, event:8, gold:4, shop:3, forward:2, back:3, trap:6, safe:2}));
       Toast.push('已应用刺激配置（惩罚与陷阱更多）','gold');
     };
 
@@ -4774,6 +4878,44 @@ function sizeConfetti(){
 window.addEventListener('resize', sizeConfetti);
 window.addEventListener('orientationchange', ()=>setTimeout(sizeConfetti, 120));
 
+/* =========================================================
+   响应式：棋盘可用高度
+   —— 棋盘是正方形，边长必须同时受「宽度」和「可用高度」约束。
+      直接由 JS 算边长会形成循环依赖（棋盘变小 → 布局变化 → 又要重算）。
+      所以这里只测算「棋盘之外」占掉的高度，写进 CSS 变量交给 min()：
+        --board-avail-h  视口高度（用 100dvh 更准，退化到 100vh）
+        --board-chrome   顶栏 + 玩家面板 + 吸底骰子条 + 安全边距
+      于是 CSS 里 max-width:min(100%, avail-h - chrome) 就能天然等比且自适应，
+      resize / 旋转屏时浏览器自己重算，不依赖 JS 调用时机。
+   ========================================================= */
+function sizeBoard(){
+  const wrap = $('#boardWrap');
+  if(!wrap) return;
+  const root = document.documentElement;
+
+  /* 视口高度：优先 dvh（移动端地址栏收起/展开更准） */
+  let vh = window.innerHeight || root.clientHeight;
+  root.style.setProperty('--board-avail-h', vh + 'px');
+
+  /* 棋盘容器的顶部偏移（顶栏 + 玩家面板 + 间距） */
+  const cs = getComputedStyle(wrap);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const top = wrap.getBoundingClientRect().top;
+
+  /* 吸底骰子条的实际高度（非吸底布局时为 0） */
+  const dice = $('#diceSect');
+  let diceH = 0;
+  if(dice && getComputedStyle(dice).position === 'fixed'){
+    diceH = dice.getBoundingClientRect().height;
+  }
+
+  /* chrome = 棋盘上方占用 + 棋盘自身 padding + 吸底条 + 安全边距 */
+  const chrome = Math.max(0, Math.round(top + padY + diceH + 12));
+  root.style.setProperty('--board-chrome', chrome + 'px');
+}
+window.addEventListener('resize', sizeBoard);
+window.addEventListener('orientationchange', ()=>setTimeout(sizeBoard, 120));
+
 /* ---------- 封面 ---------- */
 const Cover = {
   el: null,
@@ -4829,9 +4971,9 @@ const Cover = {
   init(){
     this.el = document.getElementById('cover');
     if(!this.el) return;
-    /* 已看过封面 → 直接进游戏 */
-    if(this.shown()){ this.el.remove(); this.el = null; this.enter(); return; }
-
+    /* 始终先停在封面页：不再"看过一次就永久跳过"。
+       用户要求每次打开都从主入口进入，由自己决定是开始新局、
+       继续存档，还是进入别人分享的房间。 */
     this.stars();
 
     const startBtn = document.getElementById('cvStart');
@@ -5559,7 +5701,7 @@ const Room = {
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
         <button class="btn" id="rmLeave">离开房间</button>
         <button class="btn btn-primary" id="rmClose">关闭</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     this._box = w;
     const txt = (sel,v)=>{ const el = w.querySelector(sel); if(el){ el.value = v; el.select && el.select(); } };
@@ -5827,7 +5969,7 @@ wss.on('connection', ws=>{
       </div>
       <div style="display:flex;justify-content:flex-end;margin-top:16px">
         <button class="btn btn-primary" id="rmHelpClose">知道了</button>
-      </div>`, 'wide').querySelector('#rmHelpClose').onclick = ()=>UI.closeModal();
+      </div>`, 'wide', {dismissible:true}).querySelector('#rmHelpClose').onclick = ()=>UI.closeModal();
   }
 };
 
@@ -5859,6 +6001,7 @@ function renderTopbar(){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   sizeConfetti();
+  sizeBoard();
   /* 先载入自定义内容库，再载入设置 */
   Store.loadLib();
   State.settings = Store.loadSettings() || {weights:{}, sfx:true};
