@@ -543,6 +543,7 @@ select option{background:#241432;color:var(--txt)}
 .lib-lv,.lib-key{width:100px;flex:0 0 auto}
 .lib-num{width:64px;flex:0 0 auto}
 .lib-body{flex:1;min-width:80px}
+.lib-w{width:56px;flex:0 0 auto;text-align:center}
 .lib-del{width:28px;height:28px;flex:0 0 auto;border-radius:8px;cursor:pointer;
   background:rgba(255,95,95,.16);border:1px solid rgba(255,95,95,.34);color:#ff9d9d;
   font-size:13px;line-height:1;font-family:inherit;transition:.15s}
@@ -990,6 +991,18 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const $   = (s)=>document.querySelector(s);
 const esc = (s)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+/* 加权随机：从数组里按 weightFn 返回的权重抽一个。
+   权重取 0 = 不参与（该条永不出现）；总和为 0 时退化为均匀随机。 */
+function weightedPick(arr, weightFn){
+  if(!arr || !arr.length) return null;
+  const ws = arr.map((it,i)=>{ const w = Math.max(0, +weightFn(it,i) || 0); return w; });
+  const total = ws.reduce((s,w)=>s+w, 0);
+  if(total <= 0) return arr[Math.floor(Math.random()*arr.length)];
+  let r = Math.random() * total;
+  for(let i=0;i<arr.length;i++){ r -= ws[i]; if(r <= 0) return arr[i]; }
+  return arr[arr.length-1];
+}
+
 /* 身份查询：优先取玩家自定义身份，回退到内置身份 */
 function idMeta(key){
   const custom = State.identities && State.identities[key];
@@ -1270,6 +1283,90 @@ const Store = {
 };
 
 /* =========================================================
+   分享：内容库 / 自定义棋盘的导出、导入、分享链接
+   —— 复用 Remote.enc/dec 的 base64url 编码，前缀 MJQLIB:（内容库）/ MJQBD:（棋盘）。
+      编码串可粘贴，也可做成 ?lib= / ?board= 的链接发给别人一键导入。
+   ========================================================= */
+const Share = {
+  /* 打包内容库 */
+  packLib(){
+    return { t:'lib', v:1,
+      identities: State.identities,
+      cards: State.cards,
+      items: State.items,
+      events: State.events };
+  },
+  libCode(){ return 'MJQLIB:' + Remote.enc(this.packLib()); },
+
+  /* 打包自定义棋盘 */
+  packBoard(){
+    return { t:'board', v:1,
+      boardSpec: boardSpec(),
+      board: State.customBoard || State.board || null };
+  },
+  boardCode(){ return 'MJQBD:' + Remote.enc(this.packBoard()); },
+
+  /* 去掉自定义前缀，交给 Remote.dec 还原 */
+  decode(str){
+    const s = String(str||'').trim().replace(/\s+/g,'')
+      .replace(/^MJQLIB[:_-]?/i,'').replace(/^MJQBD[:_-]?/i,'');
+    return Remote.dec(s);
+  },
+
+  /* 应用内容库 */
+  applyLib(d){
+    if(!d || d.t !== 'lib') return false;
+    let changed = false;
+    if(d.identities && typeof d.identities === 'object' && Object.keys(d.identities).length >= 1){ State.identities = d.identities; changed = true; }
+    if(Array.isArray(d.cards)){ State.cards = d.cards; changed = true; }
+    if(d.items && typeof d.items === 'object' && Object.keys(d.items).length){ State.items = d.items; changed = true; }
+    if(Array.isArray(d.events)){ State.events = d.events; changed = true; }
+    if(changed){ Store.saveLib(); Store.save(); }
+    return changed;
+  },
+
+  /* 应用自定义棋盘 */
+  applyBoard(d){
+    if(!d || d.t !== 'board') return false;
+    let size = DEF_SIZE, shape = 'square';
+    if(d.boardSpec && typeof d.boardSpec === 'object'){
+      size = clamp(Math.floor(+d.boardSpec.size || DEF_SIZE), SIZE_MIN, SIZE_MAX);
+      shape = SHAPES.some(x=>x.key===d.boardSpec.shape) ? d.boardSpec.shape : 'square';
+    }
+    const N = size;
+    let board = null;
+    if(Array.isArray(d.board) && d.board.length === N
+       && d.board[0] && d.board[0].kind === 'start'
+       && d.board[N-1] && d.board[N-1].kind === 'goal'){
+      board = d.board.map(t=>({...t}));
+    }
+    if(!board) return false;
+    State.boardSpec = {size, shape};
+    State.customBoard = board;
+    State.board = board.map(t=>({...t}));
+    Board.invalidate();
+    Board.render();
+    renderPlayers();
+    Store.saveLib();
+    Store.save();
+    return true;
+  },
+
+  /* 分享链接：?lib= / ?board= */
+  link(code){
+    try{
+      const u = new URL(location.href);
+      u.hash = '';
+      const raw = code.replace(/^MJQLIB:/i,'').replace(/^MJQBD:/i,'');
+      const key = code.indexOf('MJQBD:') === 0 ? 'board' : 'lib';
+      u.searchParams.delete('room'); u.searchParams.delete('relay');
+      u.searchParams.set(key, raw);
+      return u.toString();
+    }catch(e){ return ''; }
+  }
+};
+
+/* =========================================================
    音效（Web Audio，无外部资源）
    ========================================================= */
 const Sfx = {
@@ -1352,7 +1449,7 @@ function pickPunishCard(identity){
   const used = (State._usedCards = State._usedCards || []);
   let fresh = pool.filter(c=>!used.includes(c.ttl));
   if(!fresh.length){ used.length = 0; fresh = pool; }
-  const card = fresh[Math.floor(Math.random()*fresh.length)];
+  const card = weightedPick(fresh, c=>c.w);   // 卡面权重 w（默认 1，0=不出现）
   used.push(card.ttl);
   return card;
 }
@@ -2645,7 +2742,7 @@ const Game = {
   },
 
   async doEvent(me){
-    const ev = rnd(State.events);
+    const ev = weightedPick(State.events, e=>e.w);   // 事件权重 w（默认 1，0=不触发）
     if(!ev) { await new Promise(r=>setTimeout(r,300)); return; }
     const others = othersOf(me);            // 全部对手
     const other = others.length ? others[Math.floor(Math.random()*others.length)] : null;  // 随机一名对手
@@ -2689,7 +2786,7 @@ const Game = {
       case 'gift': {
         const keys = Object.keys(State.items);
         if(!keys.length) break;
-        const k = keys[Math.floor(Math.random()*keys.length)];
+        const k = weightedPick(keys, key=>State.items[key] && State.items[key].w);  // 道具权重
         me.items.push(k);
         const it = State.items[k];
         log(`🎁 ${me.name} 收到神秘礼物：<b>${it.emo} ${it.name}</b>！`, 'good');
@@ -3265,6 +3362,117 @@ const UI = {
     w.dataset.lock = '1';
     w.querySelector('#cc').onclick = ()=>this.closeModal();
     w.querySelector('#co').onclick = ()=>{ this.closeModal(); onOk && onOk(); };
+  },
+
+  /* ---------- 导出（内容库 / 棋盘）---------- */
+  openExport(title, code, dataObj, filename){
+    const w = this.mount(`
+      <h2>📤 导出${esc(title)}</h2>
+      <div class="msub">
+        把下面的<b>编码串</b>复制给对方，他粘贴导入即可；或直接发<b>分享链接</b>，对方点开自动导入。
+      </div>
+      <textarea id="exCode" rows="3" readonly
+        style="width:100%;padding:10px;border-radius:11px;font-size:12px;line-height:1.5;
+        background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--txt);
+        font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical">${esc(code)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" id="exCopyCode">📋 复制编码</button>
+        <button class="btn btn-sm" id="exCopyLink">🔗 复制分享链接</button>
+        <button class="btn btn-sm" id="exDownload">💾 下载 .json</button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn" id="exClose">完成</button>
+      </div>`, '', {dismissible:true});
+
+    const copyText = (text, tip)=>{
+      const done = ()=>Toast.push(tip || '已复制','gold');
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text, done));
+      }else fallbackCopy(text, done);
+    };
+    const fallbackCopy = (text, done)=>{
+      try{
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove(); done();
+      }catch(e){ Toast.push('复制失败，请手动长按选择复制','pink'); }
+    };
+
+    w.querySelector('#exCopyCode').onclick = ()=> copyText(code, '编码已复制');
+    w.querySelector('#exCopyLink').onclick = ()=> copyText(Share.link(code), '分享链接已复制');
+    w.querySelector('#exDownload').onclick = ()=>{
+      try{
+        const blob = new Blob([JSON.stringify(dataObj, null, 2)], {type:'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename || 'share.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+        Toast.push('已下载','gold');
+      }catch(e){ Toast.push('下载失败','pink'); }
+    };
+    w.querySelector('#exClose').onclick = ()=>this.closeModal();
+  },
+
+  /* ---------- 导入（内容库 / 棋盘）---------- */
+  openImport(title, kind, onApplied){
+    const w = this.mount(`
+      <h2>📥 导入${esc(title)}</h2>
+      <div class="msub">
+        粘贴对方发来的<b>编码串</b>（MJQLIB: / MJQBD: 开头），或上传导出的 <b>.json</b> 文件。
+      </div>
+      <textarea id="imCode" rows="4"
+        placeholder="例如：MJQLIB:eJx9kU1..."
+        style="width:100%;padding:10px;border-radius:11px;font-size:12px;line-height:1.5;
+        background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--txt);
+        font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:11px;align-items:center;flex-wrap:wrap">
+        <label class="btn btn-sm" style="cursor:pointer">📁 上传 .json 文件
+          <input type="file" id="imFile" accept=".json,application/json,text/plain" style="display:none">
+        </label>
+        <span style="flex:1"></span>
+        <button class="btn" id="imCancel">取消</button>
+        <button class="btn btn-primary" id="imOk">导入</button>
+      </div>`, '', {dismissible:true});
+
+    const doImport = (raw)=>{
+      if(!raw || !raw.trim()){ Toast.push('内容为空','pink'); return; }
+      const text = raw.trim();
+      let d = null;
+      /* 带前缀的编码串 */
+      if(/^(MJQLIB|MJQBD)[:_-]?/i.test(text)){
+        d = Share.decode(text);
+      }else{
+        /* 纯 JSON（文件内容） */
+        try{ d = JSON.parse(text); }catch(e){ d = null; }
+      }
+      if(!d){ Toast.push('解析失败：不是有效的内容库/棋盘数据','pink'); return; }
+
+      let ok = false;
+      if(kind === 'lib') ok = Share.applyLib(d);
+      else if(kind === 'board') ok = Share.applyBoard(d);
+
+      if(ok){
+        Toast.push('导入成功','gold');
+        log(`📥 已导入${title}。`, 'good');
+        this.closeModal();
+        onApplied && onApplied();
+      }else{
+        Toast.push('导入失败：数据不完整或与当前棋盘不匹配','pink');
+      }
+    };
+
+    w.querySelector('#imOk').onclick = ()=> doImport(w.querySelector('#imCode').value);
+    w.querySelector('#imCancel').onclick = ()=>this.closeModal();
+    const file = w.querySelector('#imFile');
+    file.onchange = ()=>{
+      const f = file.files && file.files[0];
+      if(!f) return;
+      const rd = new FileReader();
+      rd.onload = ()=>{ w.querySelector('#imCode').value = String(rd.result||''); };
+      rd.readAsText(f);
+    };
   },
 
   /* ---------- 开局设置（人数与玩家均可自定义） ---------- */
@@ -3926,6 +4134,8 @@ const UI = {
           ${[1,2,3].map(l=>`<option value="${l}" ${c.lv===l?'selected':''}>LV${l} ${lbl[l]}</option>`).join('')}
         </select>
         <input class="lib-body" data-k="cards" data-i="${i}" data-f="body" value="${esc(c.body)}" placeholder="任务内容">
+        <input class="lib-w" data-k="cards" data-i="${i}" data-f="w" type="number" min="0" max="100"
+          value="${c.w==null?1:c.w}" title="出现权重：越大越常抽到，0=不出现">
         <button class="lib-del" data-k="cards" data-i="${i}" title="删除">✕</button>
       </div>`).join('');
 
@@ -3935,6 +4145,8 @@ const UI = {
         <input class="lib-ttl" data-k="items" data-i="${esc(it.key)}" data-f="name" value="${esc(it.name)}" maxlength="20" placeholder="道具名">
         <input class="lib-num" data-k="items" data-i="${esc(it.key)}" data-f="price" type="number" min="0" max="999" value="${it.price}">
         <input class="lib-body" data-k="items" data-i="${esc(it.key)}" data-f="desc" value="${esc(it.desc)}" placeholder="道具描述">
+        <input class="lib-w" data-k="items" data-i="${esc(it.key)}" data-f="w" type="number" min="0" max="100"
+          value="${it.w==null?1:it.w}" title="神秘礼物抽中权重：越大越常被送，0=不出现">
         <button class="lib-del" data-k="items" data-i="${esc(it.key)}" title="删除">✕</button>
       </div>
       <div class="lib-hint">效果：${esc(ITEM_EFFECTS[it.key] || '该道具没有绑定效果，只会在背包里显示')}</div>`).join('');
@@ -3948,6 +4160,8 @@ const UI = {
           ${Object.keys(EVENT_LABELS).includes(e.id)?'':`<option value="${esc(e.id)}" selected>${esc(e.id)}（自定义）</option>`}
         </select>
         <input class="lib-body" data-k="events" data-i="${i}" data-f="body" value="${esc(e.body)}" placeholder="事件描述">
+        <input class="lib-w" data-k="events" data-i="${i}" data-f="w" type="number" min="0" max="100"
+          value="${e.w==null?1:e.w}" title="触发权重：越大越常触发，0=不触发">
         <button class="lib-del" data-k="events" data-i="${i}" title="删除">✕</button>
       </div>`).join('');
 
@@ -3994,6 +4208,8 @@ const UI = {
         <button class="btn btn-sm" id="lAdd">＋ 新增一条</button>
         <button class="btn btn-sm" id="lRand">🎲 随机生成一批</button>
         <button class="btn btn-sm" id="lReset">↩︎ 恢复默认</button>
+        <button class="btn btn-sm" id="lExport">📤 导出</button>
+        <button class="btn btn-sm" id="lImport">📥 导入</button>
         <span style="flex:1"></span>
         <span style="font-size:12.5px;color:var(--txt-dim)" id="lHint">${hint()}</span>
       </div>
@@ -4020,15 +4236,15 @@ const UI = {
           if(k === 'cards'){
             const c = State.cards[+i];
             if(!c) return;
-            c[f] = (f === 'lv') ? +v : v;
+            c[f] = (f === 'lv' || f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'items'){
             const it = State.items[i];
             if(!it) return;
-            it[f] = (f === 'price') ? clamp(+v||0, 0, 999) : v;
+            it[f] = (f === 'price') ? clamp(+v||0, 0, 999) : (f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'events'){
             const e = State.events[+i];
             if(!e) return;
-            e[f] = v;
+            e[f] = (f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'identities'){
             const id = State.identities[i];
             if(!id) return;
@@ -4172,6 +4388,18 @@ const UI = {
         else                     State.identities = JSON.parse(JSON.stringify(DEFAULT_IDENTITIES));
         commit();
         /* 重新打开以刷新结构 */
+        this.closeModal();
+        this.openLibrary(onBack);
+      });
+    };
+
+    /* ---- 导出 / 导入（整库） ---- */
+    w.querySelector('#lExport').onclick = ()=>{
+      this.openExport('内容库', Share.libCode(), Share.packLib(), '小妈飞行棋-内容库.json');
+    };
+    w.querySelector('#lImport').onclick = ()=>{
+      this.openImport('内容库', 'lib', ()=>{
+        /* 导入后刷新当前内容库面板 */
         this.closeModal();
         this.openLibrary(onBack);
       });
@@ -4385,7 +4613,8 @@ const UI = {
     draft[eSize-1] = {kind:'goal'};
 
     let counts = countTiles(draft);
-    let mode = 'count';          // count = 按数量生成 | step = 逐格微调
+    let mode = 'count';          // count = 按数量生成 | prob = 按概率配置 | step = 逐格微调
+    let probs = null;            // 概率模式下的百分比（懒加载，切到该模式时由 counts 反推）
 
     /* 换格数时重建棋盘：尽量沿用原配置的比例，起点终点锁死 */
     const resizeTo = (size)=>{
@@ -4398,7 +4627,48 @@ const UI = {
       eSize = N;
       draft = buildBoardByCounts(nc, N);
       counts = countTiles(draft);
+      probs = null;              // 格数变了，概率重新反推
       Board.invalidate();
+    };
+
+    /* ---- 概率换算：数量 ↔ 百分比 ----
+       countsToProbs：把各类数量换算成占比（%），并把舍入误差摊到数量最多的一类上，让合计尽量 = 100。
+       probsToCounts：把百分比按「最大余数法」换算成格子数量，保证合计恰好 = eSize-2，任意输入都不会超格。 */
+    const countsToProbs = ()=>{
+      const cap = Math.max(1, eSize - 2);
+      const p = {};
+      COUNTABLE.forEach(k=>{ p[k] = Math.round((counts[k]||0) / cap * 100); });
+      const sum = COUNTABLE.reduce((s,k)=>s+p[k], 0);
+      if(sum !== 100){
+        let idx = 0;
+        COUNTABLE.forEach((k,i)=>{ if(p[k] > p[COUNTABLE[idx]]) idx = i; });
+        p[COUNTABLE[idx]] = Math.max(0, p[COUNTABLE[idx]] + (100 - sum));
+      }
+      return p;
+    };
+    const probsToCounts = (p)=>{
+      const cap = Math.max(0, eSize - 2);
+      const c = {}; COUNTABLE.forEach(k=>{ c[k] = 0; });
+      const total = COUNTABLE.reduce((s,k)=>s+Math.max(0, p[k]||0), 0);
+      if(cap <= 0 || total <= 0) return c;
+      const raw = {}, frac = {};
+      COUNTABLE.forEach(k=>{ const ex = Math.max(0,p[k]||0)/total*cap; const fl = Math.floor(ex); raw[k]=fl; frac[k]=ex-fl; });
+      let used = COUNTABLE.reduce((s,k)=>s+raw[k], 0);
+      if(used < cap){
+        const order = COUNTABLE.slice().sort((a,b)=>frac[b]-frac[a]);
+        let i = 0; while(used < cap){ raw[order[i%order.length]]++; used++; i++; }
+      }else if(used > cap){
+        const order = COUNTABLE.slice().sort((a,b)=>frac[a]-frac[b]);
+        let i = 0;
+        while(used > cap){
+          const k = order[i%order.length];
+          if(raw[k] > 0){ raw[k]--; used--; }
+          else if(order.every(x=>raw[x] <= 0)) break;
+          i++;
+        }
+      }
+      COUNTABLE.forEach(k=>{ c[k] = Math.max(0, raw[k]||0); });
+      return c;
     };
 
     /* ---- 数量模式 ---- */
@@ -4449,7 +4719,44 @@ const UI = {
       </div>`;
     }).join('');
 
-    const body = ()=> mode === 'count' ? countRows() : stepRows();
+    const body = ()=> mode === 'count' ? countRows() : (mode === 'prob' ? probRows() : stepRows());
+
+    /* ---- 概率模式 ---- */
+    const probRows = ()=>{
+      if(!probs) probs = countsToProbs();
+      const sum = COUNTABLE.reduce((s,k)=>s+(probs[k]||0), 0);
+      const rows = COUNTABLE.map(k=>{
+        const meta = TILE_KIND[k];
+        const n = counts[k] || 0;
+        const v = probs[k] || 0;
+        return `<div class="ed-row prob-row" data-pk="${k}">
+          <span class="ed-idx"><span class="tl-sw" style="background:${meta.color};color:#1a1029">${meta.emo}</span></span>
+          <span style="flex:1;font-size:13.5px">${LABEL[k]}</span>
+          <input type="range" min="0" max="100" step="1" data-prob="${k}" value="${v}"
+            style="flex:2;min-width:110px;accent-color:${meta.color}">
+          <span class="prob-txt" style="width:92px;text-align:right;font-size:12px;color:var(--txt-dim)">${v}% · ${n} 格</span>
+        </div>`;
+      }).join('');
+      return rows + `
+        <div class="prob-sum" id="probSum" style="margin-top:12px;padding:11px 13px;border-radius:12px;
+          background:${sum===100?'rgba(78,232,208,.13)':'rgba(255,159,92,.13)'};
+          border:1px solid ${sum===100?'rgba(78,232,208,.36)':'rgba(255,159,92,.36)'};
+          font-size:13px;line-height:1.6">
+          <div>各类占比合计 <b id="probSumNum">${sum}%</b>${sum===100?'，配置完美 ✓':`，需等于 100%（当前${sum>100?'多':'少'}了 ${Math.abs(100-sum)}%）`}</div>
+          <div style="margin-top:4px;font-size:12.5px;color:var(--txt-dim)">起点与终点各固定 1 格，不参与概率；保存时按占比自动换算成格子数量。</div>
+        </div>`;
+    };
+    const refreshProbSum = ()=>{
+      const sumEl = w && w.querySelector('#probSumNum');
+      const box = w && w.querySelector('#probSum');
+      if(!sumEl || !box) return;
+      const sum = COUNTABLE.reduce((s,k)=>s+(probs[k]||0), 0);
+      sumEl.textContent = sum + '%';
+      box.style.background = sum===100 ? 'rgba(78,232,208,.13)' : 'rgba(255,159,92,.13)';
+      box.style.borderColor = sum===100 ? 'rgba(78,232,208,.36)' : 'rgba(255,159,92,.36)';
+      const hint = box.querySelector('div');
+      if(hint) hint.innerHTML = `各类占比合计 <b>${sum}%</b>${sum===100?'，配置完美 ✓':`，需等于 100%（当前${sum>100?'多':'少'}了 ${Math.abs(100-sum)}%）`}`;
+    };
 
     const summary = ()=>{
       const c = mode === 'count'
@@ -4505,6 +4812,7 @@ const UI = {
 
       <div class="codex-tabs" id="eTabs" style="margin-bottom:16px">
         <div class="codex-tab on" data-m="count">🔢 按数量配置</div>
+        <div class="codex-tab" data-m="prob">📊 按概率配置</div>
         <div class="codex-tab" data-m="step">🧩 逐格微调</div>
       </div>
 
@@ -4513,6 +4821,8 @@ const UI = {
         <button class="btn btn-sm" id="eRandom">🎲 随机数量</button>
         <button class="btn btn-sm" id="eBalance">⚖️ 均衡配置</button>
         <button class="btn btn-sm" id="eHard">🔥 刺激配置</button>
+        <button class="btn btn-sm" id="eExport">📤 导出</button>
+        <button class="btn btn-sm" id="eImport">📥 导入</button>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="ePreview">👁️ 预览</button>
       </div>
@@ -4565,6 +4875,22 @@ const UI = {
           draft[i].trapBack = clamp(+inp.value||3, 1, 9);
         };
       });
+
+      /* 概率模式 */
+      box.querySelectorAll('input[data-prob]').forEach(r=>{
+        r.oninput = ()=>{
+          const k = r.dataset.prob;
+          const v = clamp(+r.value||0, 0, 100);
+          probs[k] = v;
+          counts = probsToCounts(probs);
+          syncFromCounts();
+          /* 只更新该行文字与合计，不重绘滑块，避免拖动时跳动 */
+          const row = r.closest('.prob-row');
+          if(row){ const txt = row.querySelector('.prob-txt'); if(txt) txt.textContent = `${v}% · ${counts[k]||0} 格`; }
+          refreshProbSum();
+          w.querySelector('#eSummary').innerHTML = summary();
+        };
+      });
     };
 
     /* 把数量配置换算成棋盘（仅在保存/切换时执行，保证 draft 与 counts 一致） */
@@ -4580,8 +4906,8 @@ const UI = {
         const on = (+b.dataset.n === eSize);
         b.style.borderColor = on ? 'var(--pink)' : '';
       });
-      /* 数量模式下的容量提示要跟着变 */
-      if(mode === 'count') w.querySelector('#eBody').innerHTML = body();
+      /* 数量/概率模式下的容量提示要跟着变 */
+      if(mode === 'count' || mode === 'prob') w.querySelector('#eBody').innerHTML = body();
       w.querySelector('#eSummary').innerHTML = summary();
     };
 
@@ -4632,9 +4958,12 @@ const UI = {
       t.onclick = ()=>{
         /* 切换前先把当前模式的结果固化 */
         if(mode === 'count') syncFromCounts();
+        else if(mode === 'prob'){ counts = probsToCounts(probs || countsToProbs()); syncFromCounts(); }
         else counts = countTiles(draft);
 
         mode = t.dataset.m;
+        /* 进入概率模式时，从当前数量反推百分比（首次进入才反推，避免覆盖用户刚调好的值） */
+        if(mode === 'prob' && !probs) probs = countsToProbs();
         w.querySelectorAll('#eTabs .codex-tab').forEach(x=>x.classList.remove('on'));
         t.classList.add('on');
         bind();
@@ -4644,6 +4973,7 @@ const UI = {
     /* ---- 预设 ---- */
     const applyPreset = (c)=>{
       counts = Object.assign({punish:0,event:0,gold:0,shop:0,forward:0,back:0,trap:0,safe:0}, c);
+      probs = null;              // 预设改变了数量，概率重新反推
       syncFromCounts();
       bind();
     };
@@ -4739,6 +5069,24 @@ const UI = {
       State.boardSpec = prevSpec;
       State.board = prevBoard;
       Toast.push('已在主棋盘预览（未保存）','pink');
+    };
+
+    /* ---- 导出 / 导入棋盘 ---- */
+    w.querySelector('#eExport').onclick = ()=>{
+      /* 导出当前编辑中的草稿（含未保存改动） */
+      if(mode === 'count') syncFromCounts();
+      draft[0] = {kind:'start'};
+      draft[eSize-1] = {kind:'goal'};
+      const data = { t:'board', v:1, boardSpec:{size:eSize, shape:eSpec.shape}, board: draft.map(t=>({...t})) };
+      const code = 'MJQBD:' + Remote.enc(data);
+      this.openExport('棋盘', code, data, '小妈飞行棋-棋盘.json');
+    };
+    w.querySelector('#eImport').onclick = ()=>{
+      this.openImport('棋盘', 'board', ()=>{
+        /* 导入成功后：刷新编辑器草稿并重开，保持设置页上下文 */
+        this.closeModal();
+        this.openEditor(onBack);
+      });
     };
 
     w.querySelector('#eCancel').onclick = ()=>{ this.closeModal(); onBack && onBack(); };
@@ -6033,14 +6381,27 @@ document.addEventListener('DOMContentLoaded', ()=>{
   Relay.url = State.relayUrl;
 
   /* 分享链接深链：?room=XXXXXX[&relay=wss://...] → 自动进房 + 连中继 */
-  let dlRoom = '', dlRelay = '';
+  let dlRoom = '', dlRelay = '', dlLib = '', dlBoard = '';
   try{
     const q = new URLSearchParams(location.search);
     dlRoom = (q.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
     dlRelay = q.get('relay') || '';
+    dlLib = q.get('lib') || '';
+    dlBoard = q.get('board') || '';
   }catch(e){}
   if(dlRelay){
     if(!/^wss?:\/\//i.test(dlRelay)) dlRelay = '';
+  }
+  /* 内容库 / 棋盘分享链接：点开自动导入（在进房逻辑之前，保证本地先套用） */
+  if(dlLib){
+    const d = Share.decode('MJQLIB:' + dlLib);
+    if(d && Share.applyLib(d)) Toast.push('📥 已通过链接导入内容库','gold');
+    else Toast.push('内容库链接无效，已忽略','pink');
+  }
+  if(dlBoard){
+    const d = Share.decode('MJQBD:' + dlBoard);
+    if(d && Share.applyBoard(d)) Toast.push('📥 已通过链接导入棋盘','gold');
+    else Toast.push('棋盘链接无效，已忽略','pink');
   }
   if(dlRoom){
     const asHost = (State.room === dlRoom) && isHost();
