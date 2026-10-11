@@ -1961,6 +1961,43 @@ const Board = {
     svg.appendChild(piecesLayer);
     this.piecesLayer = piecesLayer;
 
+    /* --- 等待房主同步的遮罩：参与者进房、还没有玩家数据时盖在棋盘上 ---
+       用半透明底 + 居中提示，避免出现"一张空棋盘"看起来像渲染坏了。 */
+    if(typeof Waiting !== 'undefined' && Waiting._on && (!State.players || !State.players.length)){
+      const veil = document.createElementNS(NS,'g');
+      veil.setAttribute('class','waiting-veil');
+      veil.setAttribute('pointer-events','none');
+
+      const vRect = document.createElementNS(NS,'rect');
+      vRect.setAttribute('x', 0); vRect.setAttribute('y', 0);
+      vRect.setAttribute('width', W); vRect.setAttribute('height', W);
+      vRect.setAttribute('rx', 30*K);
+      vRect.setAttribute('fill','#160b22');
+      vRect.setAttribute('fill-opacity','.72');
+      veil.appendChild(vRect);
+
+      const wt1 = document.createElementNS(NS,'text');
+      wt1.setAttribute('x', W/2); wt1.setAttribute('y', W/2 - 16*K);
+      wt1.setAttribute('text-anchor','middle');
+      wt1.setAttribute('fill','#ff9dc0');
+      wt1.setAttribute('font-size', String(46*K));
+      wt1.setAttribute('font-weight','800');
+      wt1.setAttribute('font-family','PingFang SC,Microsoft YaHei,sans-serif');
+      wt1.textContent = '⏳ 等待房主同步';
+      veil.appendChild(wt1);
+
+      const wt2 = document.createElementNS(NS,'text');
+      wt2.setAttribute('x', W/2); wt2.setAttribute('y', W/2 + 46*K);
+      wt2.setAttribute('text-anchor','middle');
+      wt2.setAttribute('fill','#c5b0cf');
+      wt2.setAttribute('font-size', String(24*K));
+      wt2.setAttribute('font-family','PingFang SC,Microsoft YaHei,sans-serif');
+      wt2.textContent = State.room ? `房间 ${State.room} · 房主开始后自动显示棋盘` : '房主开始后自动显示棋盘';
+      veil.appendChild(wt2);
+
+      svg.appendChild(veil);
+    }
+
     host.innerHTML = '';
     host.appendChild(svg);
     this.svg = svg;
@@ -2282,6 +2319,7 @@ const Game = {
     $('#log').innerHTML = '';
     const names = State.players.map(p=>p.name).join('、');
     const sm = shapeMeta(boardSpec().shape);
+    if(typeof Waiting !== 'undefined') Waiting.hide();
     log(`🎉 欢迎来到 <b>小妈飞行棋</b>！本局玩家：${names}。`, 'sys');
     log(`🎯 目标：从起飞点走到第 ${goalPos()} 格终点，先到者获胜。`, 'sys');
     log(`🗺️ 棋盘：${sm.emo} ${sm.name} · 一圈 ${boardSize()} 格。`, 'sys');
@@ -3500,6 +3538,7 @@ const UI = {
     Sfx.on = State.settings.sfx !== false;
 
     $('#log').innerHTML = '';
+    if(typeof Waiting !== 'undefined') Waiting.hide();
     log('💾 已恢复上次的对局进度，继续吧。', 'sys');
     const sm2 = shapeMeta(boardSpec().shape);
     log(`🗺️ 棋盘：${sm2.emo} ${sm2.name} · 一圈 ${boardSize()} 格。`, 'sys');
@@ -4773,6 +4812,9 @@ const Cover = {
        —— 若走「开始游戏」会本地重开一局（进度归零），要等房主下次行动才被拉回同步 */
     if(State.room && !isHost()){
       if(Store.load()) UI.resume();
+      /* 没有本地存档时，之前什么都不渲染，主界面会留下一大片空白棋盘。
+         这里主动画一个"等待房主同步"的占位盘，让界面始终有内容。 */
+      else Waiting.show();
       Toast.push(`已加入房间 ${State.room}，正在等待房主同步…`,'gold');
       return;
     }
@@ -4811,6 +4853,56 @@ const Cover = {
       if(app) app.style.visibility = '';
       origHide(cb);
     };
+  }
+};
+
+/* =========================================================
+   等待房主同步（参与者占位盘）
+   —— 通过分享链接进房、本机又没有存档时，房主设定还没推过来。
+      此时棋盘与玩家面板都是空的，如果不渲染任何东西，主界面会留下
+      一大片纯色空白（#boardWrap 的空卡片），看起来像"点了空白处出错"。
+      这里主动画一个空的默认棋盘 + 一句提示，占位到房主同步为止。
+   ========================================================= */
+const Waiting = {
+  _on: false,
+  /* 默认棋盘兜底：参与者不知道房主的棋盘规格，先按默认 40 格方形画 */
+  board(){
+    try{ return defaultBoard(boardSize()); }
+    catch(e){ return defaultBoard(DEF_SIZE); }
+  },
+  show(){
+    /* 已有玩家数据（例如已在本地开局）就不用占位 */
+    if(State.players && State.players.length) return;
+    this._on = true;
+    /* boardSpec 可能来自存档/深链，取不到就回退默认 */
+    if(!State.boardSpec || typeof State.boardSpec !== 'object'){
+      State.boardSpec = {size: DEF_SIZE, shape: 'square'};
+    }
+    if(!Array.isArray(State.board) || State.board.length !== boardSize()){
+      State.board = this.board();
+    }
+    Board.invalidate();
+    try{ Board.render(); }catch(e){}
+    renderPlayers();
+    renderDice(1);
+    this.hint();
+    $('#rollBtn') && ($('#rollBtn').disabled = true);
+  },
+  /* 棋盘上的居中提示由 Board.render 内联绘制；这里只补侧栏/日志文案 */
+  hint(){
+    const logEl = $('#log');
+    if(logEl && !logEl.dataset.waiting){
+      logEl.dataset.waiting = '1';
+      log('⏳ 已进入房间，正在等待房主同步棋盘与规则…', 'sys');
+      log('房主开始游戏后，这里会自动显示棋盘与进度。', 'sys');
+    }
+    Game.updateHint && Game.updateHint();
+  },
+  hide(){
+    if(!this._on) return;
+    this._on = false;
+    const logEl = $('#log');
+    if(logEl) delete logEl.dataset.waiting;
   }
 };
 
@@ -4966,6 +5058,11 @@ const Remote = {
     Board.invalidate();
     const N = boardSize();
     State.customBoard = (Array.isArray(d.board) && d.board.length === N) ? d.board.map(t=>({...t})) : null;
+    /* 关键：Board.render() 读的是 State.board，不是 customBoard。
+       房主推来的棋盘必须同步进 State.board，否则参与者那边永远画的是旧棋盘。 */
+    State.board = State.customBoard
+      ? State.customBoard.map(t=>({...t}))
+      : defaultBoard(N);
 
     /* 内容库：房主说了算 */
     if(d.lib){
@@ -5319,6 +5416,10 @@ const Net = {
       /* 参与者：套用房主的棋盘 + 规则 + 内容库 */
       const wasHost = isHost();
       Remote.applyRoom(d, wasHost);
+      /* 房主可能只是开了房间、还没点开始：这时玩家名单还是空的，
+         继续显示"等待房主开始"，别让棋盘又变成一张空白盘。 */
+      if(!State.players || !State.players.length) Waiting.show();
+      else Waiting.hide();
       Board.render(); renderPlayers(); renderTopbar();
       Toast.push('已同步房主的房间设定','gold');
       log('📥 已套用房主设定的棋盘、规则与内容库。', 'good');
@@ -5330,6 +5431,7 @@ const Net = {
       this._applying = true;
       try{
         if(Remote.applyState(d)){
+          Waiting.hide();
           log(`📥 已同步对局进度（第 ${State.round} 圈 · 轮到 ${esc(State.players[State.turn] ? State.players[State.turn].name : '—')}）。`, 'good');
           stateRefreshAll();
           Room.refreshStatus();
@@ -5761,10 +5863,27 @@ document.addEventListener('DOMContentLoaded', ()=>{
   Store.loadLib();
   State.settings = Store.loadSettings() || {weights:{}, sfx:true};
   Sfx.on = State.settings.sfx !== false;
-  /* 恢复房间身份 */
-  State.room = State.settings.room || null;
-  State.hostKey = State.settings.hostKey || null;
-  State.isHost = !State.room || !State.hostKey;
+  /* 恢复房间身份
+     —— 只在 URL 带 ?room= 时才沿用上次的房间身份。
+        否则「点过一次别人的分享链接」会把这个房间永久写进设置，
+        之后每次直接打开游戏都会误以为自己仍是那个房间的参与者，
+        既不显示开局设置、也不渲染棋盘，卡在"等待房主同步"。 */
+  let _hasRoomParam = false;
+  try{ _hasRoomParam = !!new URLSearchParams(location.search).get('room'); }catch(e){}
+  if(_hasRoomParam){
+    State.room = State.settings.room || null;
+    State.hostKey = State.settings.hostKey || null;
+    State.isHost = !State.room || !State.hostKey;
+  }else{
+    State.room = null;
+    State.hostKey = null;
+    State.isHost = true;
+    /* 顺手清掉设置里残留的房间，避免下次又被带出来 */
+    if(State.settings.room || State.settings.hostKey){
+      State.settings = Object.assign({}, State.settings, {room:null, hostKey:null});
+      Store.saveSettings(State.settings);
+    }
+  }
 
   /* 中继地址：设置里存的 > 本机记忆 */
   State.relayUrl = State.settings.relayUrl || Relay.loadUrl() || '';
