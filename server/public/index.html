@@ -789,6 +789,7 @@ select option{background:#241432;color:var(--txt)}
       <button class="btn btn-sm" id="boardBtn" onclick="UI.openEditor()">🎨 棋盘</button>
       <button class="btn btn-sm" id="settingsBtn" onclick="UI.openSettings()">⚙️ 设置</button>
       <button class="btn btn-sm" onclick="Game.restart()">🔄 重开</button>
+      <button class="btn btn-sm" onclick="Cover.goHome()">🏠 主页</button>
     </div>
   </div>
 
@@ -4785,9 +4786,37 @@ const Cover = {
       UI.openSetup();
     }
   },
+  /* 返回主页：存档 + 把封面重新盖上（棋局与联机房间原样保留，
+     重新进入时自动恢复进度；联机中已连接的中继不断开，回到对局无需重连） */
+  goHome(){
+    try{ Store.save(); }catch(e){}
+    this.reshow();
+  },
+  reshow(){
+    if(this.el || !this._tpl) return;
+    try{ UI.closeModal(); }catch(e){}
+    const wrap = document.createElement('div');
+    wrap.innerHTML = this._tpl;
+    const el = wrap.firstElementChild;
+    document.body.appendChild(el);
+    this.el = el;
+    this.stars();
+    const startBtn = el.querySelector('#cvStart');
+    const skipBtn  = el.querySelector('#cvSkip');
+    const go = ()=>{ Sfx.init(); Sfx.click && Sfx.click(); this.hide(()=>this.enter()); };
+    if(startBtn) startBtn.onclick = go;
+    if(skipBtn)  skipBtn.onclick  = go;
+    /* 覆盖期间隐藏棋盘区，避免闪一下（与 init 同款处理） */
+    const app = document.getElementById('app');
+    if(app) app.style.visibility = 'hidden';
+    const origHide = this.hide.bind(this);
+    this.hide = (cb)=>{ if(app) app.style.visibility = ''; origHide(cb); };
+  },
+
   init(){
     this.el = document.getElementById('cover');
     if(!this.el) return;
+    this._tpl = this.el.outerHTML;     // 缓存封面模板，「返回主页」时重新盖上
     /* 已看过封面 → 直接进游戏 */
     if(this.shown()){ this.el.remove(); this.el = null; this.enter(); return; }
 
