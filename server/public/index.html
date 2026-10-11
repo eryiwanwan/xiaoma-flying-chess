@@ -134,11 +134,23 @@ body::before{
 /* ============ 主体 ============ */
 #main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:start}
 #boardWrap{padding:10px;position:relative}
-/* 棋盘整体突出：让 SVG 的投影延伸到容器外，视觉上浮起来 */
+/* 棋盘整体突出：让 SVG 的投影延伸到容器外，视觉上浮起来。
+   关键：棋盘是正方形，边长必须同时受「宽度」和「可用高度」约束。
+   只用宽度定正方形时，横屏 iPad（1194×834）会把棋盘撑到 818px 高，
+   整块溢出屏幕、右侧与底部格子被裁掉。
+   这里用 CSS min() 直接算：
+     · 宽度上限 = 容器宽度
+     · 高度上限 = 视口高度扣掉顶栏 / 玩家面板 / 吸底骰子条（--chrome-h，由 JS 提供）
+   取两者较小值，天然等比、且不依赖 JS 时序（resize 时浏览器自己重算）。 */
 #boardHost{
-  width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
-  filter:drop-shadow(0 8px 26px rgba(0,0,0,.5))
+  width:100%;aspect-ratio:1;
+  /* --board-chrome 由 sizeBoard() 实测写入；首屏 JS 还没跑时用保守默认值，
+     避免棋盘先撑大再回缩造成闪动。 */
+  max-width:min(100%, calc(var(--board-avail-h, 100vh) - var(--board-chrome, 300px)));
+  margin:0 auto;display:flex;align-items:center;justify-content:center;
+  min-height:0;filter:drop-shadow(0 8px 26px rgba(0,0,0,.5))
 }
+#boardHost > svg{width:100%;height:100%;max-width:100%;max-height:100%}
 
 /* ============ 侧栏 ============ */
 #side{display:flex;flex-direction:column;gap:12px}
@@ -531,6 +543,7 @@ select option{background:#241432;color:var(--txt)}
 .lib-lv,.lib-key{width:100px;flex:0 0 auto}
 .lib-num{width:64px;flex:0 0 auto}
 .lib-body{flex:1;min-width:80px}
+.lib-w{width:56px;flex:0 0 auto;text-align:center}
 .lib-del{width:28px;height:28px;flex:0 0 auto;border-radius:8px;cursor:pointer;
   background:rgba(255,95,95,.16);border:1px solid rgba(255,95,95,.34);color:#ff9d9d;
   font-size:13px;line-height:1;font-family:inherit;transition:.15s}
@@ -540,6 +553,17 @@ select option{background:#241432;color:var(--txt)}
 /* ============ 移动端 / 响应式 ============ */
 
 /* --- 平板 / 小笔记本：主体改单列 --- */
+@media(max-width:1024px){
+  /* 顶栏按钮条：平板宽度也放不下 6 个按钮，
+     改为可横向滑动，避免换行/文字被截断 */
+  #topbar .tb-scroll{
+    display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;
+    padding-bottom:2px;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+  }
+  #topbar .tb-scroll::-webkit-scrollbar{display:none}
+  #topbar .btn-sm{flex:0 0 auto;white-space:nowrap}
+}
+
 @media(max-width:860px){
   #main{grid-template-columns:1fr}
   #side{order:2}
@@ -554,6 +578,27 @@ select option{background:#241432;color:var(--txt)}
   #logo{font-size:15.5px}
   #dice{width:76px;height:76px;padding:10px}
   .pip{width:13px;height:13px}
+}
+
+/* --- 平板横屏 / 矮屏（触屏）：主体双列但骰子吸底，棋盘按高度收 ---
+   用 pointer:coarse 限定触屏，避免命中 1366×768 这类矮屏笔记本：
+   笔记本更适合让棋盘自然排布，而不是把骰子条吸到底部盖住棋盘。
+   高度阈值放到 900px，覆盖 iPad Pro 11/12.9 横屏（834/1024 宽 × 834/1024 高）。 */
+@media(min-width:861px) and (pointer:coarse) and (orientation:landscape){
+  #main{padding-bottom:96px}
+  #side{gap:9px}
+  #diceSect{
+    position:fixed;left:0;right:0;bottom:0;z-index:80;
+    border-radius:18px 18px 0 0;border-bottom:none;
+    padding:8px 16px calc(8px + env(safe-area-inset-bottom,0px));
+    background:rgba(30,15,45,.96);backdrop-filter:blur(18px);
+    box-shadow:0 -8px 30px rgba(0,0,0,.55);
+  }
+  #diceSect h3{display:none}
+  #diceBox{flex-direction:row;gap:14px;padding:0;align-items:center}
+  #dice{width:54px;height:54px;padding:8px;border-radius:13px;flex:0 0 auto}
+  #rollBtn{flex:1 1 auto;min-width:0}
+  #turnHint{font-size:12px}
 }
 
 /* --- 手机：整体改为「骰子吸底 + 棋盘优先」布局 --- */
@@ -685,8 +730,8 @@ select option{background:#241432;color:var(--txt)}
   #main{padding-bottom:72px}
 }
 
-/* --- 横屏矮屏：避免吸底骰子条吃掉棋盘 --- */
-@media(max-width:900px) and (orientation:landscape) and (max-height:520px){
+/* --- 横屏手机：避免吸底骰子条吃掉棋盘，棋盘按高度收 --- */
+@media(max-width:860px) and (orientation:landscape) and (max-height:560px){
   #diceSect{
     position:static;border-radius:14px;border-bottom:1px solid var(--border);
     padding:8px 11px;box-shadow:none;background:var(--panel);
@@ -694,7 +739,7 @@ select option{background:#241432;color:var(--txt)}
   #diceSect h3{display:none}
   #diceBox{flex-direction:row;padding:0}
   #main{padding-bottom:0}
-  #boardWrap{max-width:min(56vh,520px);margin:0 auto}
+  #boardWrap{max-width:min(62vh,520px);margin:0 auto}
 }
 
 /* --- 封面在窄屏/手机上收紧 --- */
@@ -957,6 +1002,18 @@ const ri  = (min,max)=>Math.floor(Math.random()*(max-min+1))+min;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const $   = (s)=>document.querySelector(s);
 const esc = (s)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* 加权随机：从数组里按 weightFn 返回的权重抽一个。
+   权重取 0 = 不参与（该条永不出现）；总和为 0 时退化为均匀随机。 */
+function weightedPick(arr, weightFn){
+  if(!arr || !arr.length) return null;
+  const ws = arr.map((it,i)=>{ const w = Math.max(0, +weightFn(it,i) || 0); return w; });
+  const total = ws.reduce((s,w)=>s+w, 0);
+  if(total <= 0) return arr[Math.floor(Math.random()*arr.length)];
+  let r = Math.random() * total;
+  for(let i=0;i<arr.length;i++){ r -= ws[i]; if(r <= 0) return arr[i]; }
+  return arr[arr.length-1];
+}
 
 /* 身份查询：优先取玩家自定义身份，回退到内置身份 */
 function idMeta(key){
@@ -1238,6 +1295,90 @@ const Store = {
 };
 
 /* =========================================================
+   分享：内容库 / 自定义棋盘的导出、导入、分享链接
+   —— 复用 Remote.enc/dec 的 base64url 编码，前缀 MJQLIB:（内容库）/ MJQBD:（棋盘）。
+      编码串可粘贴，也可做成 ?lib= / ?board= 的链接发给别人一键导入。
+   ========================================================= */
+const Share = {
+  /* 打包内容库 */
+  packLib(){
+    return { t:'lib', v:1,
+      identities: State.identities,
+      cards: State.cards,
+      items: State.items,
+      events: State.events };
+  },
+  libCode(){ return 'MJQLIB:' + Remote.enc(this.packLib()); },
+
+  /* 打包自定义棋盘 */
+  packBoard(){
+    return { t:'board', v:1,
+      boardSpec: boardSpec(),
+      board: State.customBoard || State.board || null };
+  },
+  boardCode(){ return 'MJQBD:' + Remote.enc(this.packBoard()); },
+
+  /* 去掉自定义前缀，交给 Remote.dec 还原 */
+  decode(str){
+    const s = String(str||'').trim().replace(/\s+/g,'')
+      .replace(/^MJQLIB[:_-]?/i,'').replace(/^MJQBD[:_-]?/i,'');
+    return Remote.dec(s);
+  },
+
+  /* 应用内容库 */
+  applyLib(d){
+    if(!d || d.t !== 'lib') return false;
+    let changed = false;
+    if(d.identities && typeof d.identities === 'object' && Object.keys(d.identities).length >= 1){ State.identities = d.identities; changed = true; }
+    if(Array.isArray(d.cards)){ State.cards = d.cards; changed = true; }
+    if(d.items && typeof d.items === 'object' && Object.keys(d.items).length){ State.items = d.items; changed = true; }
+    if(Array.isArray(d.events)){ State.events = d.events; changed = true; }
+    if(changed){ Store.saveLib(); Store.save(); }
+    return changed;
+  },
+
+  /* 应用自定义棋盘 */
+  applyBoard(d){
+    if(!d || d.t !== 'board') return false;
+    let size = DEF_SIZE, shape = 'square';
+    if(d.boardSpec && typeof d.boardSpec === 'object'){
+      size = clamp(Math.floor(+d.boardSpec.size || DEF_SIZE), SIZE_MIN, SIZE_MAX);
+      shape = SHAPES.some(x=>x.key===d.boardSpec.shape) ? d.boardSpec.shape : 'square';
+    }
+    const N = size;
+    let board = null;
+    if(Array.isArray(d.board) && d.board.length === N
+       && d.board[0] && d.board[0].kind === 'start'
+       && d.board[N-1] && d.board[N-1].kind === 'goal'){
+      board = d.board.map(t=>({...t}));
+    }
+    if(!board) return false;
+    State.boardSpec = {size, shape};
+    State.customBoard = board;
+    State.board = board.map(t=>({...t}));
+    Board.invalidate();
+    Board.render();
+    renderPlayers();
+    Store.saveLib();
+    Store.save();
+    return true;
+  },
+
+  /* 分享链接：?lib= / ?board= */
+  link(code){
+    try{
+      const u = new URL(location.href);
+      u.hash = '';
+      const raw = code.replace(/^MJQLIB:/i,'').replace(/^MJQBD:/i,'');
+      const key = code.indexOf('MJQBD:') === 0 ? 'board' : 'lib';
+      u.searchParams.delete('room'); u.searchParams.delete('relay');
+      u.searchParams.set(key, raw);
+      return u.toString();
+    }catch(e){ return ''; }
+  }
+};
+
+/* =========================================================
    音效（Web Audio，无外部资源）
    ========================================================= */
 const Sfx = {
@@ -1320,7 +1461,7 @@ function pickPunishCard(identity){
   const used = (State._usedCards = State._usedCards || []);
   let fresh = pool.filter(c=>!used.includes(c.ttl));
   if(!fresh.length){ used.length = 0; fresh = pool; }
-  const card = fresh[Math.floor(Math.random()*fresh.length)];
+  const card = weightedPick(fresh, c=>c.w);   // 卡面权重 w（默认 1，0=不出现）
   used.push(card.ttl);
   return card;
 }
@@ -1974,10 +2115,53 @@ const Board = {
     svg.appendChild(piecesLayer);
     this.piecesLayer = piecesLayer;
 
+    /* --- 等待房主同步的遮罩：参与者进房、还没有玩家数据时盖在棋盘上 ---
+       用半透明底 + 居中提示，避免出现"一张空棋盘"看起来像渲染坏了。 */
+    if(typeof Waiting !== 'undefined' && Waiting._on && (!State.players || !State.players.length)){
+      const veil = document.createElementNS(NS,'g');
+      veil.setAttribute('class','waiting-veil');
+      veil.setAttribute('pointer-events','none');
+
+      const vRect = document.createElementNS(NS,'rect');
+      vRect.setAttribute('x', 0); vRect.setAttribute('y', 0);
+      vRect.setAttribute('width', W); vRect.setAttribute('height', W);
+      vRect.setAttribute('rx', 30*K);
+      vRect.setAttribute('fill','#160b22');
+      vRect.setAttribute('fill-opacity','.72');
+      veil.appendChild(vRect);
+
+      const wt1 = document.createElementNS(NS,'text');
+      wt1.setAttribute('x', W/2); wt1.setAttribute('y', W/2 - 16*K);
+      wt1.setAttribute('text-anchor','middle');
+      wt1.setAttribute('fill','#ff9dc0');
+      wt1.setAttribute('font-size', String(46*K));
+      wt1.setAttribute('font-weight','800');
+      wt1.setAttribute('font-family','PingFang SC,Microsoft YaHei,sans-serif');
+      wt1.textContent = '⏳ 等待房主同步';
+      veil.appendChild(wt1);
+
+      const wt2 = document.createElementNS(NS,'text');
+      wt2.setAttribute('x', W/2); wt2.setAttribute('y', W/2 + 46*K);
+      wt2.setAttribute('text-anchor','middle');
+      wt2.setAttribute('fill','#c5b0cf');
+      wt2.setAttribute('font-size', String(24*K));
+      wt2.setAttribute('font-family','PingFang SC,Microsoft YaHei,sans-serif');
+      wt2.textContent = State.room ? `房间 ${State.room} · 房主开始后自动显示棋盘` : '房主开始后自动显示棋盘';
+      veil.appendChild(wt2);
+
+      svg.appendChild(veil);
+    }
+
     host.innerHTML = '';
     host.appendChild(svg);
     this.svg = svg;
     this.drawPieces();
+    /* 重绘后同步一次棋盘可用高度（横竖屏切换 / 窗口变化都会走这里）。
+       放 rAF 里等布局稳定后再测，避免读到中间态。 */
+    if(typeof sizeBoard === 'function'){
+      sizeBoard();
+      if(typeof requestAnimationFrame === 'function') requestAnimationFrame(sizeBoard);
+    }
   },
 
   drawPieces(){
@@ -2295,6 +2479,7 @@ const Game = {
     $('#log').innerHTML = '';
     const names = State.players.map(p=>p.name).join('、');
     const sm = shapeMeta(boardSpec().shape);
+    if(typeof Waiting !== 'undefined') Waiting.hide();
     log(`🎉 欢迎来到 <b>小妈飞行棋</b>！本局玩家：${names}。`, 'sys');
     log(`🎯 目标：从起飞点走到第 ${boardSize()} 格终点，先到者获胜。`, 'sys');
     log(`🗺️ 棋盘：${sm.emo} ${sm.name} · 一圈 ${boardSize()} 格。`, 'sys');
@@ -2570,7 +2755,7 @@ const Game = {
   },
 
   async doEvent(me){
-    const ev = rnd(State.events);
+    const ev = weightedPick(State.events, e=>e.w);   // 事件权重 w（默认 1，0=不触发）
     if(!ev) { await new Promise(r=>setTimeout(r,300)); return; }
     const others = othersOf(me);            // 全部对手
     const other = others.length ? others[Math.floor(Math.random()*others.length)] : null;  // 随机一名对手
@@ -2614,7 +2799,7 @@ const Game = {
       case 'gift': {
         const keys = Object.keys(State.items);
         if(!keys.length) break;
-        const k = keys[Math.floor(Math.random()*keys.length)];
+        const k = weightedPick(keys, key=>State.items[key] && State.items[key].w);  // 道具权重
         me.items.push(k);
         const it = State.items[k];
         log(`🎁 ${me.name} 收到神秘礼物：<b>${it.emo} ${it.name}</b>！`, 'good');
@@ -3063,14 +3248,28 @@ const Game = {
 const UI = {
   modalStack: [],
 
-  mount(html, cls){
+  /* mount(html, cls, opts)
+     opts.dismissible —— 点遮罩是否允许关闭。默认 false：
+       "误触框外就关窗"会让填到一半的开局设置/编辑器直接丢掉，
+       属于很容易踩的坑，所以默认锁住，只有明确需要的面板才开。
+     opts.lock —— 强制锁定（确认类弹窗内部使用）。 */
+  mount(html, cls, opts){
+    const o = opts || {};
     const host = $('#modalHost');
     const wrap = document.createElement('div');
     wrap.className = 'modal';
     wrap.innerHTML = `<div class="mbox ${cls||''}">${html}</div>`;
     host.appendChild(wrap);
     this.modalStack.push(wrap);
-    wrap.addEventListener('click', e=>{ if(e.target === wrap && wrap.dataset.lock !== '1') this.closeModal(); });
+    /* 只有显式声明 dismissible 且未被 lock 的面板，才允许点遮罩关闭 */
+    if(o.dismissible) wrap.dataset.dismissible = '1';
+    if(o.lock)        wrap.dataset.lock = '1';
+    wrap.addEventListener('click', e=>{
+      if(e.target !== wrap) return;                  // 只认"点在最外层遮罩上"
+      if(wrap.dataset.lock === '1') return;          // 强制锁定
+      if(wrap.dataset.dismissible !== '1') return;   // 默认不因误触关闭
+      this.closeModal();
+    });
     return wrap;
   },
   closeModal(){
@@ -3177,6 +3376,117 @@ const UI = {
     w.dataset.lock = '1';
     w.querySelector('#cc').onclick = ()=>this.closeModal();
     w.querySelector('#co').onclick = ()=>{ this.closeModal(); onOk && onOk(); };
+  },
+
+  /* ---------- 导出（内容库 / 棋盘）---------- */
+  openExport(title, code, dataObj, filename){
+    const w = this.mount(`
+      <h2>📤 导出${esc(title)}</h2>
+      <div class="msub">
+        把下面的<b>编码串</b>复制给对方，他粘贴导入即可；或直接发<b>分享链接</b>，对方点开自动导入。
+      </div>
+      <textarea id="exCode" rows="3" readonly
+        style="width:100%;padding:10px;border-radius:11px;font-size:12px;line-height:1.5;
+        background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--txt);
+        font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical">${esc(code)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" id="exCopyCode">📋 复制编码</button>
+        <button class="btn btn-sm" id="exCopyLink">🔗 复制分享链接</button>
+        <button class="btn btn-sm" id="exDownload">💾 下载 .json</button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn" id="exClose">完成</button>
+      </div>`, '', {dismissible:true});
+
+    const copyText = (text, tip)=>{
+      const done = ()=>Toast.push(tip || '已复制','gold');
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text, done));
+      }else fallbackCopy(text, done);
+    };
+    const fallbackCopy = (text, done)=>{
+      try{
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove(); done();
+      }catch(e){ Toast.push('复制失败，请手动长按选择复制','pink'); }
+    };
+
+    w.querySelector('#exCopyCode').onclick = ()=> copyText(code, '编码已复制');
+    w.querySelector('#exCopyLink').onclick = ()=> copyText(Share.link(code), '分享链接已复制');
+    w.querySelector('#exDownload').onclick = ()=>{
+      try{
+        const blob = new Blob([JSON.stringify(dataObj, null, 2)], {type:'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename || 'share.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+        Toast.push('已下载','gold');
+      }catch(e){ Toast.push('下载失败','pink'); }
+    };
+    w.querySelector('#exClose').onclick = ()=>this.closeModal();
+  },
+
+  /* ---------- 导入（内容库 / 棋盘）---------- */
+  openImport(title, kind, onApplied){
+    const w = this.mount(`
+      <h2>📥 导入${esc(title)}</h2>
+      <div class="msub">
+        粘贴对方发来的<b>编码串</b>（MJQLIB: / MJQBD: 开头），或上传导出的 <b>.json</b> 文件。
+      </div>
+      <textarea id="imCode" rows="4"
+        placeholder="例如：MJQLIB:eJx9kU1..."
+        style="width:100%;padding:10px;border-radius:11px;font-size:12px;line-height:1.5;
+        background:rgba(0,0,0,.3);border:1px solid var(--border);color:var(--txt);
+        font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:11px;align-items:center;flex-wrap:wrap">
+        <label class="btn btn-sm" style="cursor:pointer">📁 上传 .json 文件
+          <input type="file" id="imFile" accept=".json,application/json,text/plain" style="display:none">
+        </label>
+        <span style="flex:1"></span>
+        <button class="btn" id="imCancel">取消</button>
+        <button class="btn btn-primary" id="imOk">导入</button>
+      </div>`, '', {dismissible:true});
+
+    const doImport = (raw)=>{
+      if(!raw || !raw.trim()){ Toast.push('内容为空','pink'); return; }
+      const text = raw.trim();
+      let d = null;
+      /* 带前缀的编码串 */
+      if(/^(MJQLIB|MJQBD)[:_-]?/i.test(text)){
+        d = Share.decode(text);
+      }else{
+        /* 纯 JSON（文件内容） */
+        try{ d = JSON.parse(text); }catch(e){ d = null; }
+      }
+      if(!d){ Toast.push('解析失败：不是有效的内容库/棋盘数据','pink'); return; }
+
+      let ok = false;
+      if(kind === 'lib') ok = Share.applyLib(d);
+      else if(kind === 'board') ok = Share.applyBoard(d);
+
+      if(ok){
+        Toast.push('导入成功','gold');
+        log(`📥 已导入${title}。`, 'good');
+        this.closeModal();
+        onApplied && onApplied();
+      }else{
+        Toast.push('导入失败：数据不完整或与当前棋盘不匹配','pink');
+      }
+    };
+
+    w.querySelector('#imOk').onclick = ()=> doImport(w.querySelector('#imCode').value);
+    w.querySelector('#imCancel').onclick = ()=>this.closeModal();
+    const file = w.querySelector('#imFile');
+    file.onchange = ()=>{
+      const f = file.files && file.files[0];
+      if(!f) return;
+      const rd = new FileReader();
+      rd.onload = ()=>{ w.querySelector('#imCode').value = String(rd.result||''); };
+      rd.readAsText(f);
+    };
   },
 
   /* ---------- 开局设置（人数与玩家均可自定义） ---------- */
@@ -3301,6 +3611,7 @@ const UI = {
       </div>
 
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap">
+        ${hasSave ? '<button class="btn" id="setupBack" style="margin-right:auto">← 返回</button>' : ''}
         <button class="btn" id="libBtn">📚 内容库</button>
         <button class="btn" id="codexBtn">📖 图鉴</button>
         <button class="btn" id="boardBtn">🎨 棋盘</button>
@@ -3308,6 +3619,13 @@ const UI = {
         <button class="btn btn-primary" id="startBtn">开始游戏 →</button>
       </div>
     `, 'wide');
+
+    /* 开局设置不再靠点遮罩关闭（防误触丢配置），
+       检测到存档时给一个明确的返回入口，回到封面主流程。 */
+    if(w.querySelector('#setupBack')) w.querySelector('#setupBack').onclick = ()=>{
+      this.closeModal();
+      if(hasSave) UI.resume();
+    };
 
     /* ---- 玩家名单渲染 ---- */
     const renderRoster = ()=>{
@@ -3514,6 +3832,7 @@ const UI = {
     Sfx.on = State.settings.sfx !== false;
 
     $('#log').innerHTML = '';
+    if(typeof Waiting !== 'undefined') Waiting.hide();
     log('💾 已恢复上次的对局进度，继续吧。', 'sys');
     const sm2 = shapeMeta(boardSpec().shape);
     log(`🗺️ 棋盘：${sm2.emo} ${sm2.name} · 一圈 ${boardSize()} 格。`, 'sys');
@@ -3807,7 +4126,7 @@ const UI = {
       <div id="cbody">${body()}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
         <button class="btn btn-primary" id="cclose">${onBack?'返回设置':'知道了'}</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     w.querySelectorAll('.codex-tab').forEach(t=>{
       t.onclick = ()=>{
@@ -3836,6 +4155,8 @@ const UI = {
           ${[1,2,3].map(l=>`<option value="${l}" ${c.lv===l?'selected':''}>LV${l} ${lbl[l]}</option>`).join('')}
         </select>
         <input class="lib-body" data-k="cards" data-i="${i}" data-f="body" value="${esc(c.body)}" placeholder="任务内容">
+        <input class="lib-w" data-k="cards" data-i="${i}" data-f="w" type="number" min="0" max="100"
+          value="${c.w==null?1:c.w}" title="出现权重：越大越常抽到，0=不出现">
         <button class="lib-del" data-k="cards" data-i="${i}" title="删除">✕</button>
       </div>`).join('');
 
@@ -3845,6 +4166,8 @@ const UI = {
         <input class="lib-ttl" data-k="items" data-i="${esc(it.key)}" data-f="name" value="${esc(it.name)}" maxlength="20" placeholder="道具名">
         <input class="lib-num" data-k="items" data-i="${esc(it.key)}" data-f="price" type="number" min="0" max="999" value="${it.price}">
         <input class="lib-body" data-k="items" data-i="${esc(it.key)}" data-f="desc" value="${esc(it.desc)}" placeholder="道具描述">
+        <input class="lib-w" data-k="items" data-i="${esc(it.key)}" data-f="w" type="number" min="0" max="100"
+          value="${it.w==null?1:it.w}" title="神秘礼物抽中权重：越大越常被送，0=不出现">
         <button class="lib-del" data-k="items" data-i="${esc(it.key)}" title="删除">✕</button>
       </div>
       <div class="lib-hint">效果：${esc(ITEM_EFFECTS[it.key] || '该道具没有绑定效果，只会在背包里显示')}</div>`).join('');
@@ -3858,6 +4181,8 @@ const UI = {
           ${Object.keys(EVENT_LABELS).includes(e.id)?'':`<option value="${esc(e.id)}" selected>${esc(e.id)}（自定义）</option>`}
         </select>
         <input class="lib-body" data-k="events" data-i="${i}" data-f="body" value="${esc(e.body)}" placeholder="事件描述">
+        <input class="lib-w" data-k="events" data-i="${i}" data-f="w" type="number" min="0" max="100"
+          value="${e.w==null?1:e.w}" title="触发权重：越大越常触发，0=不触发">
         <button class="lib-del" data-k="events" data-i="${i}" title="删除">✕</button>
       </div>`).join('');
 
@@ -3904,14 +4229,15 @@ const UI = {
         <button class="btn btn-sm" id="lAdd">＋ 新增一条</button>
         <button class="btn btn-sm" id="lRand">🎲 随机生成一批</button>
         <button class="btn btn-sm" id="lReset">↩︎ 恢复默认</button>
-        <button class="btn btn-sm" id="lCode">📤 内容库随身码</button>
+        <button class="btn btn-sm" id="lExport">📤 导出</button>
+        <button class="btn btn-sm" id="lImport">📥 导入</button>
         <span style="flex:1"></span>
         <span style="font-size:12.5px;color:var(--txt-dim)" id="lHint">${hint()}</span>
       </div>
       <div id="lGrid" style="max-height:46vh;overflow-y:auto;padding-right:6px">${grid()}</div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
         <button class="btn btn-primary" id="lClose">${onBack?'返回设置':'完成'}</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     /* ---- 绑定输入 ---- */
     const commit = ()=>{
@@ -3931,15 +4257,15 @@ const UI = {
           if(k === 'cards'){
             const c = State.cards[+i];
             if(!c) return;
-            c[f] = (f === 'lv') ? +v : v;
+            c[f] = (f === 'lv' || f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'items'){
             const it = State.items[i];
             if(!it) return;
-            it[f] = (f === 'price') ? clamp(+v||0, 0, 999) : v;
+            it[f] = (f === 'price') ? clamp(+v||0, 0, 999) : (f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'events'){
             const e = State.events[+i];
             if(!e) return;
-            e[f] = v;
+            e[f] = (f === 'w') ? clamp(+v||0, 0, 100) : v;
           }else if(k === 'identities'){
             const id = State.identities[i];
             if(!id) return;
@@ -4088,74 +4414,20 @@ const UI = {
       });
     };
 
+    /* ---- 导出 / 导入（整库） ---- */
+    w.querySelector('#lExport').onclick = ()=>{
+      this.openExport('内容库', Share.libCode(), Share.packLib(), '小妈飞行棋-内容库.json');
+    };
+    w.querySelector('#lImport').onclick = ()=>{
+      this.openImport('内容库', 'lib', ()=>{
+        /* 导入后刷新当前内容库面板 */
+        this.closeModal();
+        this.openLibrary(onBack);
+      });
+    };
+
     w.querySelector('#lClose').onclick = ()=>{ commit(); this.closeModal(); onBack && onBack(); };
 
-    /* ---- 内容库随身码：导出 / 导入（gzip 压缩短码，跨设备还原自定义内容库） ---- */
-    w.querySelector('#lCode').onclick = async ()=>{
-      const payload = JSON.stringify({ t:'lib', v:1, lib:{
-        identities: State.identities, cards: State.cards, items: State.items, events: State.events
-      }});
-      const code = await gzipCode(payload);
-      const fp = fingerprint(code);
-      const w2 = this.mount(`
-        <h2>📤 内容库随身码</h2>
-        <div class="msub">
-          这串码压缩了你的<b>全部自定义内容</b>（惩罚卡 / 道具 / 随机事件 / 身份）。
-          发给自己或朋友，在「内容库 → 导入」粘贴即可原样还原。
-        </div>
-        <div class="fgrp">
-          <label class="fl">我的内容库码 · 指纹 <b>${fp}</b> · ${code.length} 字符</label>
-          <textarea id="lCodeOut" rows="4" readonly style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px">${esc(code)}</textarea>
-        </div>
-        <div style="display:flex;gap:10px;margin-bottom:16px">
-          <button class="btn btn-sm btn-primary" id="lCodeCopy">📋 复制</button>
-          <button class="btn btn-sm" id="lCodeDl">💾 下载 .txt</button>
-        </div>
-        <div class="fgrp">
-          <label class="fl">导入：把内容库码粘贴到这里（会覆盖当前内容库）</label>
-          <textarea id="lCodeIn" rows="4" placeholder="粘贴 Z1:… 内容库码" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px"></textarea>
-        </div>
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
-          <button class="btn" id="lCodeImport">📥 导入并覆盖</button>
-          <button class="btn btn-primary" id="lCodeClose">完成</button>
-        </div>`, 'wide');
-      w2.querySelector('#lCodeOut').value = code;
-      w2.querySelector('#lCodeCopy').onclick = async ()=>{
-        try{ await navigator.clipboard.writeText(code); Toast.push('内容库码已复制','gold'); }
-        catch(e){ w2.querySelector('#lCodeOut').select(); document.execCommand('copy'); Toast.push('已复制','gold'); }
-      };
-      w2.querySelector('#lCodeDl').onclick = ()=>{
-        const b = new Blob([code], { type:'text/plain;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(b);
-        a.download = '小妈内容库码.txt';
-        a.click();
-        setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
-      };
-      w2.querySelector('#lCodeClose').onclick = ()=>UI.closeModal();
-      w2.querySelector('#lCodeImport').onclick = async ()=>{
-        const txt = w2.querySelector('#lCodeIn').value.trim();
-        if(!txt){ Toast.push('先粘贴内容库码','pink'); return; }
-        const raw = await ungzipCode(txt);
-        let payload = null;
-        try{ payload = JSON.parse(raw || txt); }catch(e){}
-        const lib = payload && payload.t === 'lib' ? payload.lib : (payload && payload.lib ? payload.lib : null);
-        if(!lib || !Array.isArray(lib.cards) || !lib.identities || typeof lib.items !== 'object' || !Array.isArray(lib.events)){
-          Toast.push('内容库码无效或已损坏','pink'); return;
-        }
-        State.identities = lib.identities;
-        State.cards = lib.cards;
-        State.items = lib.items;
-        State.events = lib.events;
-        Store.saveLib();
-        UI.closeModal();
-        bind();
-        w.querySelector('#lHint').innerHTML = hint();
-        renderPlayers();
-        Toast.push(`内容库已还原（${lib.cards.length} 张卡 · 指纹 ${fp}）`,'gold');
-        log(`📥 已从内容库码还原自定义内容：惩罚卡 ${lib.cards.length} · 道具 ${Object.keys(lib.items).length} · 事件 ${lib.events.length}。`, 'good');
-      };
-    };
   },
 
   /* ---------- 设置 ---------- */
@@ -4363,7 +4635,8 @@ const UI = {
     draft[eSize-1] = {kind:'goal'};
 
     let counts = countTiles(draft);
-    let mode = 'count';          // count = 按数量生成 | step = 逐格微调
+    let mode = 'count';          // count = 按数量生成 | prob = 按概率配置 | step = 逐格微调
+    let probs = null;            // 概率模式下的百分比（懒加载，切到该模式时由 counts 反推）
 
     /* 换格数时重建棋盘：尽量沿用原配置的比例，起点终点锁死 */
     const resizeTo = (size)=>{
@@ -4376,7 +4649,48 @@ const UI = {
       eSize = N;
       draft = buildBoardByCounts(nc, N);
       counts = countTiles(draft);
+      probs = null;              // 格数变了，概率重新反推
       Board.invalidate();
+    };
+
+    /* ---- 概率换算：数量 ↔ 百分比 ----
+       countsToProbs：把各类数量换算成占比（%），并把舍入误差摊到数量最多的一类上，让合计尽量 = 100。
+       probsToCounts：把百分比按「最大余数法」换算成格子数量，保证合计恰好 = eSize-2，任意输入都不会超格。 */
+    const countsToProbs = ()=>{
+      const cap = Math.max(1, eSize - 2);
+      const p = {};
+      COUNTABLE.forEach(k=>{ p[k] = Math.round((counts[k]||0) / cap * 100); });
+      const sum = COUNTABLE.reduce((s,k)=>s+p[k], 0);
+      if(sum !== 100){
+        let idx = 0;
+        COUNTABLE.forEach((k,i)=>{ if(p[k] > p[COUNTABLE[idx]]) idx = i; });
+        p[COUNTABLE[idx]] = Math.max(0, p[COUNTABLE[idx]] + (100 - sum));
+      }
+      return p;
+    };
+    const probsToCounts = (p)=>{
+      const cap = Math.max(0, eSize - 2);
+      const c = {}; COUNTABLE.forEach(k=>{ c[k] = 0; });
+      const total = COUNTABLE.reduce((s,k)=>s+Math.max(0, p[k]||0), 0);
+      if(cap <= 0 || total <= 0) return c;
+      const raw = {}, frac = {};
+      COUNTABLE.forEach(k=>{ const ex = Math.max(0,p[k]||0)/total*cap; const fl = Math.floor(ex); raw[k]=fl; frac[k]=ex-fl; });
+      let used = COUNTABLE.reduce((s,k)=>s+raw[k], 0);
+      if(used < cap){
+        const order = COUNTABLE.slice().sort((a,b)=>frac[b]-frac[a]);
+        let i = 0; while(used < cap){ raw[order[i%order.length]]++; used++; i++; }
+      }else if(used > cap){
+        const order = COUNTABLE.slice().sort((a,b)=>frac[a]-frac[b]);
+        let i = 0;
+        while(used > cap){
+          const k = order[i%order.length];
+          if(raw[k] > 0){ raw[k]--; used--; }
+          else if(order.every(x=>raw[x] <= 0)) break;
+          i++;
+        }
+      }
+      COUNTABLE.forEach(k=>{ c[k] = Math.max(0, raw[k]||0); });
+      return c;
     };
 
     /* ---- 数量模式 ---- */
@@ -4427,7 +4741,44 @@ const UI = {
       </div>`;
     }).join('');
 
-    const body = ()=> mode === 'count' ? countRows() : stepRows();
+    const body = ()=> mode === 'count' ? countRows() : (mode === 'prob' ? probRows() : stepRows());
+
+    /* ---- 概率模式 ---- */
+    const probRows = ()=>{
+      if(!probs) probs = countsToProbs();
+      const sum = COUNTABLE.reduce((s,k)=>s+(probs[k]||0), 0);
+      const rows = COUNTABLE.map(k=>{
+        const meta = TILE_KIND[k];
+        const n = counts[k] || 0;
+        const v = probs[k] || 0;
+        return `<div class="ed-row prob-row" data-pk="${k}">
+          <span class="ed-idx"><span class="tl-sw" style="background:${meta.color};color:#1a1029">${meta.emo}</span></span>
+          <span style="flex:1;font-size:13.5px">${LABEL[k]}</span>
+          <input type="range" min="0" max="100" step="1" data-prob="${k}" value="${v}"
+            style="flex:2;min-width:110px;accent-color:${meta.color}">
+          <span class="prob-txt" style="width:92px;text-align:right;font-size:12px;color:var(--txt-dim)">${v}% · ${n} 格</span>
+        </div>`;
+      }).join('');
+      return rows + `
+        <div class="prob-sum" id="probSum" style="margin-top:12px;padding:11px 13px;border-radius:12px;
+          background:${sum===100?'rgba(78,232,208,.13)':'rgba(255,159,92,.13)'};
+          border:1px solid ${sum===100?'rgba(78,232,208,.36)':'rgba(255,159,92,.36)'};
+          font-size:13px;line-height:1.6">
+          <div>各类占比合计 <b id="probSumNum">${sum}%</b>${sum===100?'，配置完美 ✓':`，需等于 100%（当前${sum>100?'多':'少'}了 ${Math.abs(100-sum)}%）`}</div>
+          <div style="margin-top:4px;font-size:12.5px;color:var(--txt-dim)">起点与终点各固定 1 格，不参与概率；保存时按占比自动换算成格子数量。</div>
+        </div>`;
+    };
+    const refreshProbSum = ()=>{
+      const sumEl = w && w.querySelector('#probSumNum');
+      const box = w && w.querySelector('#probSum');
+      if(!sumEl || !box) return;
+      const sum = COUNTABLE.reduce((s,k)=>s+(probs[k]||0), 0);
+      sumEl.textContent = sum + '%';
+      box.style.background = sum===100 ? 'rgba(78,232,208,.13)' : 'rgba(255,159,92,.13)';
+      box.style.borderColor = sum===100 ? 'rgba(78,232,208,.36)' : 'rgba(255,159,92,.36)';
+      const hint = box.querySelector('div');
+      if(hint) hint.innerHTML = `各类占比合计 <b>${sum}%</b>${sum===100?'，配置完美 ✓':`，需等于 100%（当前${sum>100?'多':'少'}了 ${Math.abs(100-sum)}%）`}`;
+    };
 
     const summary = ()=>{
       const c = mode === 'count'
@@ -4483,6 +4834,7 @@ const UI = {
 
       <div class="codex-tabs" id="eTabs" style="margin-bottom:16px">
         <div class="codex-tab on" data-m="count">🔢 按数量配置</div>
+        <div class="codex-tab" data-m="prob">📊 按概率配置</div>
         <div class="codex-tab" data-m="step">🧩 逐格微调</div>
       </div>
 
@@ -4491,6 +4843,8 @@ const UI = {
         <button class="btn btn-sm" id="eRandom">🎲 随机数量</button>
         <button class="btn btn-sm" id="eBalance">⚖️ 均衡配置</button>
         <button class="btn btn-sm" id="eHard">🔥 刺激配置</button>
+        <button class="btn btn-sm" id="eExport">📤 导出</button>
+        <button class="btn btn-sm" id="eImport">📥 导入</button>
         <span style="flex:1"></span>
         <button class="btn btn-sm" id="ePreview">👁️ 预览</button>
       </div>
@@ -4543,6 +4897,22 @@ const UI = {
           draft[i].trapBack = clamp(+inp.value||3, 1, 9);
         };
       });
+
+      /* 概率模式 */
+      box.querySelectorAll('input[data-prob]').forEach(r=>{
+        r.oninput = ()=>{
+          const k = r.dataset.prob;
+          const v = clamp(+r.value||0, 0, 100);
+          probs[k] = v;
+          counts = probsToCounts(probs);
+          syncFromCounts();
+          /* 只更新该行文字与合计，不重绘滑块，避免拖动时跳动 */
+          const row = r.closest('.prob-row');
+          if(row){ const txt = row.querySelector('.prob-txt'); if(txt) txt.textContent = `${v}% · ${counts[k]||0} 格`; }
+          refreshProbSum();
+          w.querySelector('#eSummary').innerHTML = summary();
+        };
+      });
     };
 
     /* 把数量配置换算成棋盘（仅在保存/切换时执行，保证 draft 与 counts 一致） */
@@ -4558,8 +4928,8 @@ const UI = {
         const on = (+b.dataset.n === eSize);
         b.style.borderColor = on ? 'var(--pink)' : '';
       });
-      /* 数量模式下的容量提示要跟着变 */
-      if(mode === 'count') w.querySelector('#eBody').innerHTML = body();
+      /* 数量/概率模式下的容量提示要跟着变 */
+      if(mode === 'count' || mode === 'prob') w.querySelector('#eBody').innerHTML = body();
       w.querySelector('#eSummary').innerHTML = summary();
     };
 
@@ -4610,9 +4980,12 @@ const UI = {
       t.onclick = ()=>{
         /* 切换前先把当前模式的结果固化 */
         if(mode === 'count') syncFromCounts();
+        else if(mode === 'prob'){ counts = probsToCounts(probs || countsToProbs()); syncFromCounts(); }
         else counts = countTiles(draft);
 
         mode = t.dataset.m;
+        /* 进入概率模式时，从当前数量反推百分比（首次进入才反推，避免覆盖用户刚调好的值） */
+        if(mode === 'prob' && !probs) probs = countsToProbs();
         w.querySelectorAll('#eTabs .codex-tab').forEach(x=>x.classList.remove('on'));
         t.classList.add('on');
         bind();
@@ -4622,6 +4995,7 @@ const UI = {
     /* ---- 预设 ---- */
     const applyPreset = (c)=>{
       counts = Object.assign({punish:0,event:0,gold:0,shop:0,forward:0,back:0,trap:0,safe:0}, c);
+      probs = null;              // 预设改变了数量，概率重新反推
       syncFromCounts();
       bind();
     };
@@ -4649,27 +5023,59 @@ const UI = {
       Toast.push('已随机生成数量配置','gold');
     };
 
-    /* 预设按格数等比缩放，这样换成 64 格也依然是"均衡"的 */
+    /* 预设按格数等比缩放。旧实现只让"最后一类"补齐，其余各类独立四舍五入，
+       当基数合计（刺激配置 = 40）本身不小于 38 时，取整后总和必然溢出，
+       最后一类被 Math.max(0,…) 压成 0，界面显示的合计就超过棋盘容量了
+       （表现：选刺激配置后数量超出 / 休憩格恒为 0）。
+       这里改成"归一化 + 最大余数法"分配：先按比例取整，再把差额按小数部分
+       从大到小逐一补/减，保证任意格数下都恰好铺满且各类占比不失真。 */
     const preset = (base40)=>{
-      const ratio = (eSize - 2) / 38;
+      const cap = Math.max(0, eSize - 2);                 // 可铺格数（去掉起点与终点）
+      const keys = COUNTABLE.slice();
+      const total = keys.reduce((s,k)=>s+Math.max(0, base40[k]||0), 0);
       const c = {};
-      let used = 0;
-      COUNTABLE.forEach((k,i,arr)=>{
-        c[k] = (i === arr.length - 1)
-          ? Math.max(0, eSize - 2 - used)          // 最后一类补齐，保证刚好铺满
-          : Math.max(0, Math.round((base40[k]||0) * ratio));
-        used += c[k];
+      if(cap <= 0 || total <= 0){ keys.forEach(k=>{ c[k]=0; }); return c; }
+
+      /* 1) 按占比算理想份额，取整数部分 */
+      const raw = {}, frac = {};
+      keys.forEach(k=>{
+        const exact = Math.max(0, base40[k]||0) / total * cap;
+        const fl = Math.floor(exact);
+        raw[k] = fl;
+        frac[k] = exact - fl;
       });
+      let used = keys.reduce((s,k)=>s+raw[k], 0);
+
+      /* 2) 差额用最大余数法补足（差额 > 0）或从余数最小者削减（差额 < 0） */
+      if(used < cap){
+        const order = keys.slice().sort((a,b)=>frac[b]-frac[a]);
+        let i = 0;
+        while(used < cap){ raw[order[i % order.length]]++; used++; i++; }
+      }else if(used > cap){
+        const order = keys.slice().sort((a,b)=>frac[a]-frac[b]);
+        let i = 0;
+        while(used > cap){
+          const k = order[i % order.length];
+          if(raw[k] > 0){ raw[k]--; used--; }
+          else if(order.every(x=>raw[x] <= 0)) break;     // 兜底防死循环
+          i++;
+        }
+      }
+
+      /* 3) 起点与终点各占 1 格，其余按分配结果 */
+      keys.forEach(k=>{ c[k] = Math.max(0, raw[k] || 0); });
       return c;
     };
 
+    /* 预设基数按「38 格可铺区」给出，天然铺满。
+       刺激配置让惩罚+陷阱占到约 2/3，同时保留少量休憩格作缓冲。 */
     w.querySelector('#eBalance').onclick = ()=>{
       applyPreset(preset({punish:9, event:6, gold:6, shop:4, forward:5, back:3, trap:3, safe:2}));
       Toast.push('已应用均衡配置','gold');
     };
 
     w.querySelector('#eHard').onclick = ()=>{
-      applyPreset(preset({punish:14, event:7, gold:4, shop:4, forward:2, back:4, trap:5, safe:2}));
+      applyPreset(preset({punish:16, event:8, gold:4, shop:3, forward:2, back:3, trap:6, safe:2}));
       Toast.push('已应用刺激配置（惩罚与陷阱更多）','gold');
     };
 
@@ -4685,6 +5091,24 @@ const UI = {
       State.boardSpec = prevSpec;
       State.board = prevBoard;
       Toast.push('已在主棋盘预览（未保存）','pink');
+    };
+
+    /* ---- 导出 / 导入棋盘 ---- */
+    w.querySelector('#eExport').onclick = ()=>{
+      /* 导出当前编辑中的草稿（含未保存改动） */
+      if(mode === 'count') syncFromCounts();
+      draft[0] = {kind:'start'};
+      draft[eSize-1] = {kind:'goal'};
+      const data = { t:'board', v:1, boardSpec:{size:eSize, shape:eSpec.shape}, board: draft.map(t=>({...t})) };
+      const code = 'MJQBD:' + Remote.enc(data);
+      this.openExport('棋盘', code, data, '小妈飞行棋-棋盘.json');
+    };
+    w.querySelector('#eImport').onclick = ()=>{
+      this.openImport('棋盘', 'board', ()=>{
+        /* 导入成功后：刷新编辑器草稿并重开，保持设置页上下文 */
+        this.closeModal();
+        this.openEditor(onBack);
+      });
     };
 
     w.querySelector('#eCancel').onclick = ()=>{ this.closeModal(); onBack && onBack(); };
@@ -4824,6 +5248,44 @@ function sizeConfetti(){
 window.addEventListener('resize', sizeConfetti);
 window.addEventListener('orientationchange', ()=>setTimeout(sizeConfetti, 120));
 
+/* =========================================================
+   响应式：棋盘可用高度
+   —— 棋盘是正方形，边长必须同时受「宽度」和「可用高度」约束。
+      直接由 JS 算边长会形成循环依赖（棋盘变小 → 布局变化 → 又要重算）。
+      所以这里只测算「棋盘之外」占掉的高度，写进 CSS 变量交给 min()：
+        --board-avail-h  视口高度（用 100dvh 更准，退化到 100vh）
+        --board-chrome   顶栏 + 玩家面板 + 吸底骰子条 + 安全边距
+      于是 CSS 里 max-width:min(100%, avail-h - chrome) 就能天然等比且自适应，
+      resize / 旋转屏时浏览器自己重算，不依赖 JS 调用时机。
+   ========================================================= */
+function sizeBoard(){
+  const wrap = $('#boardWrap');
+  if(!wrap) return;
+  const root = document.documentElement;
+
+  /* 视口高度：优先 dvh（移动端地址栏收起/展开更准） */
+  let vh = window.innerHeight || root.clientHeight;
+  root.style.setProperty('--board-avail-h', vh + 'px');
+
+  /* 棋盘容器的顶部偏移（顶栏 + 玩家面板 + 间距） */
+  const cs = getComputedStyle(wrap);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const top = wrap.getBoundingClientRect().top;
+
+  /* 吸底骰子条的实际高度（非吸底布局时为 0） */
+  const dice = $('#diceSect');
+  let diceH = 0;
+  if(dice && getComputedStyle(dice).position === 'fixed'){
+    diceH = dice.getBoundingClientRect().height;
+  }
+
+  /* chrome = 棋盘上方占用 + 棋盘自身 padding + 吸底条 + 安全边距 */
+  const chrome = Math.max(0, Math.round(top + padY + diceH + 12));
+  root.style.setProperty('--board-chrome', chrome + 'px');
+}
+window.addEventListener('resize', sizeBoard);
+window.addEventListener('orientationchange', ()=>setTimeout(sizeBoard, 120));
+
 /* ---------- 封面 ---------- */
 const Cover = {
   el: null,
@@ -4862,6 +5324,9 @@ const Cover = {
        —— 若走「开始游戏」会本地重开一局（进度归零），要等房主下次行动才被拉回同步 */
     if(State.room && !isHost()){
       if(Store.load()) UI.resume();
+      /* 没有本地存档时，之前什么都不渲染，主界面会留下一大片空白棋盘。
+         这里主动画一个"等待房主同步"的占位盘，让界面始终有内容。 */
+      else Waiting.show();
       Toast.push(`已加入房间 ${State.room}，正在等待房主同步…`,'gold');
       return;
     }
@@ -4903,10 +5368,10 @@ const Cover = {
   init(){
     this.el = document.getElementById('cover');
     if(!this.el) return;
-    this._tpl = this.el.outerHTML;     // 缓存封面模板，「返回主页」时重新盖上
-    /* 已看过封面 → 直接进游戏 */
-    if(this.shown()){ this.el.remove(); this.el = null; this.enter(); return; }
-
+    this._tpl = this.el.outerHTML;     // 缓存封面模板，「🏠 主页」返回时重新盖上
+    /* 始终先停在封面页：不再"看过一次就永久跳过"。
+       用户要求每次打开都从主入口进入，由自己决定是开始新局、
+       继续存档，还是进入别人分享的房间。 */
     this.stars();
 
     const startBtn = document.getElementById('cvStart');
@@ -4928,6 +5393,56 @@ const Cover = {
       if(app) app.style.visibility = '';
       origHide(cb);
     };
+  }
+};
+
+/* =========================================================
+   等待房主同步（参与者占位盘）
+   —— 通过分享链接进房、本机又没有存档时，房主设定还没推过来。
+      此时棋盘与玩家面板都是空的，如果不渲染任何东西，主界面会留下
+      一大片纯色空白（#boardWrap 的空卡片），看起来像"点了空白处出错"。
+      这里主动画一个空的默认棋盘 + 一句提示，占位到房主同步为止。
+   ========================================================= */
+const Waiting = {
+  _on: false,
+  /* 默认棋盘兜底：参与者不知道房主的棋盘规格，先按默认 40 格方形画 */
+  board(){
+    try{ return defaultBoard(boardSize()); }
+    catch(e){ return defaultBoard(DEF_SIZE); }
+  },
+  show(){
+    /* 已有玩家数据（例如已在本地开局）就不用占位 */
+    if(State.players && State.players.length) return;
+    this._on = true;
+    /* boardSpec 可能来自存档/深链，取不到就回退默认 */
+    if(!State.boardSpec || typeof State.boardSpec !== 'object'){
+      State.boardSpec = {size: DEF_SIZE, shape: 'square'};
+    }
+    if(!Array.isArray(State.board) || State.board.length !== boardSize()){
+      State.board = this.board();
+    }
+    Board.invalidate();
+    try{ Board.render(); }catch(e){}
+    renderPlayers();
+    renderDice(1);
+    this.hint();
+    $('#rollBtn') && ($('#rollBtn').disabled = true);
+  },
+  /* 棋盘上的居中提示由 Board.render 内联绘制；这里只补侧栏/日志文案 */
+  hint(){
+    const logEl = $('#log');
+    if(logEl && !logEl.dataset.waiting){
+      logEl.dataset.waiting = '1';
+      log('⏳ 已进入房间，正在等待房主同步棋盘与规则…', 'sys');
+      log('房主开始游戏后，这里会自动显示棋盘与进度。', 'sys');
+    }
+    Game.updateHint && Game.updateHint();
+  },
+  hide(){
+    if(!this._on) return;
+    this._on = false;
+    const logEl = $('#log');
+    if(logEl) delete logEl.dataset.waiting;
   }
 };
 
@@ -5083,6 +5598,11 @@ const Remote = {
     Board.invalidate();
     const N = boardSize();
     State.customBoard = (Array.isArray(d.board) && d.board.length === N) ? d.board.map(t=>({...t})) : null;
+    /* 关键：Board.render() 读的是 State.board，不是 customBoard。
+       房主推来的棋盘必须同步进 State.board，否则参与者那边永远画的是旧棋盘。 */
+    State.board = State.customBoard
+      ? State.customBoard.map(t=>({...t}))
+      : defaultBoard(N);
 
     /* 内容库：房主说了算 */
     if(d.lib){
@@ -5196,31 +5716,6 @@ const RELAY_LS = 'mjq_relay_v1';                 // 中继地址的本地记忆
 const RELAY_PROTO = 'mjq-relay-v1';              // 应用层协议标识（中继可据此路由）
 const RELAY_DEFAULT = 'wss://xiaoma-flying-chess-production.up.railway.app'; // 默认中继地址（Railway 自建）
 
-/* ===== 分享工具：压缩内容码 / 指纹 / 二维码 ===== */
-/* 内容库等大段 JSON → gzip → base64url 短码（现代浏览器原生 CompressionStream，无需依赖） */
-async function gzipCode(str){
-  if(window.CompressionStream){
-    const buf = new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
-    let bin = '';
-    for (const b of buf) bin += String.fromCharCode(b);
-    return 'Z1:' + btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  }
-  return 'P1:' + Remote.enc(str);   // 老浏览器兜底：不压缩（体积大些）
-}
-async function ungzipCode(code){
-  const s = String(code || '').trim();
-  try{
-    if(s.startsWith('Z1:')){
-      let b64 = s.slice(3).replace(/-/g,'+').replace(/_/g,'/'); while(b64.length % 4) b64 += '=';
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
-      return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-    }
-    if(s.startsWith('P1:')){ const o = Remote.dec(s.slice(3)); return o ? JSON.stringify(o) : null; }
-  }catch(e){ return null; }
-  return null;
-}
 /* 短指纹：内容哈希前 8 位十六进制，肉眼核对用 */
 function fingerprint(str){
   let h = 5381;
@@ -5476,6 +5971,10 @@ const Net = {
       /* 参与者：套用房主的棋盘 + 规则 + 内容库 */
       const wasHost = isHost();
       Remote.applyRoom(d, wasHost);
+      /* 房主可能只是开了房间、还没点开始：这时玩家名单还是空的，
+         继续显示"等待房主开始"，别让棋盘又变成一张空白盘。 */
+      if(!State.players || !State.players.length) Waiting.show();
+      else Waiting.hide();
       Board.render(); renderPlayers(); renderTopbar();
       Toast.push('已同步房主的房间设定','gold');
       log('📥 已套用房主设定的棋盘、规则与内容库。', 'good');
@@ -5487,6 +5986,7 @@ const Net = {
       this._applying = true;
       try{
         if(Remote.applyState(d)){
+          Waiting.hide();
           log(`📥 已同步对局进度（第 ${State.round} 圈 · 轮到 ${esc(State.players[State.turn] ? State.players[State.turn].name : '—')}）。`, 'good');
           stateRefreshAll();
           Room.refreshStatus();
@@ -5615,7 +6115,7 @@ const Room = {
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
         <button class="btn" id="rmLeave">离开房间</button>
         <button class="btn btn-primary" id="rmClose">关闭</button>
-      </div>`, 'wide');
+      </div>`, 'wide', {dismissible:true});
 
     this._box = w;
     const txt = (sel,v)=>{ const el = w.querySelector(sel); if(el){ el.value = v; el.select && el.select(); } };
@@ -5933,7 +6433,7 @@ wss.on('connection', ws=>{
       </div>
       <div style="display:flex;justify-content:flex-end;margin-top:16px">
         <button class="btn btn-primary" id="rmHelpClose">知道了</button>
-      </div>`, 'wide').querySelector('#rmHelpClose').onclick = ()=>UI.closeModal();
+      </div>`, 'wide', {dismissible:true}).querySelector('#rmHelpClose').onclick = ()=>UI.closeModal();
   }
 };
 
@@ -5965,28 +6465,59 @@ function renderTopbar(){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   sizeConfetti();
+  sizeBoard();
   /* 先载入自定义内容库，再载入设置 */
   Store.loadLib();
   State.settings = Store.loadSettings() || {weights:{}, sfx:true};
   Sfx.on = State.settings.sfx !== false;
-  /* 恢复房间身份 */
-  State.room = State.settings.room || null;
-  State.hostKey = State.settings.hostKey || null;
-  State.isHost = !State.room || !State.hostKey;
+  /* 恢复房间身份
+     —— 只在 URL 带 ?room= 时才沿用上次的房间身份。
+        否则「点过一次别人的分享链接」会把这个房间永久写进设置，
+        之后每次直接打开游戏都会误以为自己仍是那个房间的参与者，
+        既不显示开局设置、也不渲染棋盘，卡在"等待房主同步"。 */
+  let _hasRoomParam = false;
+  try{ _hasRoomParam = !!new URLSearchParams(location.search).get('room'); }catch(e){}
+  if(_hasRoomParam){
+    State.room = State.settings.room || null;
+    State.hostKey = State.settings.hostKey || null;
+    State.isHost = !State.room || !State.hostKey;
+  }else{
+    State.room = null;
+    State.hostKey = null;
+    State.isHost = true;
+    /* 顺手清掉设置里残留的房间，避免下次又被带出来 */
+    if(State.settings.room || State.settings.hostKey){
+      State.settings = Object.assign({}, State.settings, {room:null, hostKey:null});
+      Store.saveSettings(State.settings);
+    }
+  }
 
   /* 中继地址：设置里存的 > 本机记忆 */
   State.relayUrl = State.settings.relayUrl || Relay.loadUrl() || '';
   Relay.url = State.relayUrl;
 
   /* 分享链接深链：?room=XXXXXX[&relay=wss://...] → 自动进房 + 连中继 */
-  let dlRoom = '', dlRelay = '';
+  let dlRoom = '', dlRelay = '', dlLib = '', dlBoard = '';
   try{
     const q = new URLSearchParams(location.search);
     dlRoom = (q.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
     dlRelay = q.get('relay') || '';
+    dlLib = q.get('lib') || '';
+    dlBoard = q.get('board') || '';
   }catch(e){}
   if(dlRelay){
     if(!/^wss?:\/\//i.test(dlRelay)) dlRelay = '';
+  }
+  /* 内容库 / 棋盘分享链接：点开自动导入（在进房逻辑之前，保证本地先套用） */
+  if(dlLib){
+    const d = Share.decode('MJQLIB:' + dlLib);
+    if(d && Share.applyLib(d)) Toast.push('📥 已通过链接导入内容库','gold');
+    else Toast.push('内容库链接无效，已忽略','pink');
+  }
+  if(dlBoard){
+    const d = Share.decode('MJQBD:' + dlBoard);
+    if(d && Share.applyBoard(d)) Toast.push('📥 已通过链接导入棋盘','gold');
+    else Toast.push('棋盘链接无效，已忽略','pink');
   }
   if(dlRoom){
     const asHost = (State.room === dlRoom) && isHost();
