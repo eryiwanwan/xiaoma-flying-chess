@@ -914,7 +914,7 @@ function boardSpec(){
   return {size, shape};
 }
 function boardSize(){ return boardSpec().size; }
-function goalPos(){ return boardSize(); }
+function goalPos(){ return boardSize() - 1; }   // 终点格的真实索引（旧版返回 boardSize()，恰好落在终点格永远无法获胜，越过则越界）
 
 /* 格子类型 */
 const TILE_KIND = {
@@ -2285,7 +2285,7 @@ const Game = {
     const names = State.players.map(p=>p.name).join('、');
     const sm = shapeMeta(boardSpec().shape);
     log(`🎉 欢迎来到 <b>小妈飞行棋</b>！本局玩家：${names}。`, 'sys');
-    log(`🎯 目标：从起飞点走到第 ${goalPos()} 格终点，先到者获胜。`, 'sys');
+    log(`🎯 目标：从起飞点走到第 ${boardSize()} 格终点，先到者获胜。`, 'sys');
     log(`🗺️ 棋盘：${sm.emo} ${sm.name} · 一圈 ${boardSize()} 格。`, 'sys');
     if(!isHost()) log(`👑 本局由房主设定棋盘与规则，你是参与者。`, 'sys');
     log(`👥 共 ${State.players.length} 人，按 ${State.players.map(p=>idMeta(p.identity).emo + p.name).join(' → ')} 的顺序行动。`, 'sys');
@@ -2763,7 +2763,8 @@ const Game = {
     }
     State.pendingPunish = null;
     UI.closeModal();
-    this.endTurn();
+    /* 不在这里推进回合：settle() 的惩罚分支结束时会统一 endTurn，
+       此处再调一次会双发、吞掉下一家回合（8 人局跳人 / 2 人局绕回自己）。 */
   },
 
   /* ---- 回合结束 ---- */
@@ -3560,7 +3561,7 @@ const UI = {
         log(`⏸️ 惩罚被跳过${me?'（'+me.name+'选择暂停）':''}。本局已用 ${State.pauseUsed} 次${State.pauseLimit!==null?` / 共 ${State.pauseLimit} 次`:''}。`, 'sys');
         State.pendingPunish = null;
         this.closeModal();
-        Game.endTurn();
+        /* 回合推进由 settle() 统一处理，这里不再 endTurn（避免双发跳人） */
         resolve();
       };
     });
@@ -3634,8 +3635,15 @@ const UI = {
       });
       w.querySelector('#leaveShop').onclick = ()=>{
         this.closeModal();
+        State.phase = 'idle';
+        State.busy = false;
         log(`🚪 ${pl.name} 离开商店。`, 'sys');
-        Game.endTurn();
+        renderPlayers();
+        Game.updateHint();
+        Store.save();
+        Net.broadcastState();
+        /* 注意:回合已在商店格 settle() 进入时结束,这里只恢复待掷状态,
+           不再 endTurn(旧代码在这里重复 endTurn,导致商店后跳过下一家) */
       };
     };
     this.mount('<div></div>', '');
@@ -4648,7 +4656,7 @@ const UI = {
           ${esc(id.emo)} ${esc(id.name)} ·
           ${isLaps
             ? `跑满 <b>${lapsGoal()}</b> 圈`
-            : `用了 <b>${State.round}</b> 圈抵达终点`}
+            : `用了 <b>${State.round}</b> 轮抵达终点`}
         </div>
         <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:20px 0 6px">
           ${rank.map((p,i)=>`
